@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.1
+ * Version: 0.1.2
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -106,7 +106,7 @@ void SimpleLoggerMgr::handleSegFault(int sig) {
     mgr->flushAllLoggers("Segmentation fault");
     printf("Flushed all logs safely.\n");
     fflush(stdout);
-    exit(-1);
+    mgr->oldHandler(sig);
 }
 
 void SimpleLoggerMgr::flushWorker() {
@@ -134,6 +134,7 @@ SimpleLoggerMgr::~SimpleLoggerMgr() {
 }
 
 void SimpleLoggerMgr::flushAllLoggers(const std::string& msg) {
+    std::unique_lock<std::mutex> l(loggersLock);
     for (auto& entry: loggers) {
         SimpleLogger* logger = entry;
         if (!msg.empty()) {
@@ -144,10 +145,12 @@ void SimpleLoggerMgr::flushAllLoggers(const std::string& msg) {
 }
 
 void SimpleLoggerMgr::addLogger(SimpleLogger* logger) {
+    std::unique_lock<std::mutex> l(loggersLock);
     loggers.insert(logger);
 }
 
 void SimpleLoggerMgr::removeLogger(SimpleLogger* logger) {
+    std::unique_lock<std::mutex> l(loggersLock);
     loggers.erase(logger);
 }
 
@@ -252,12 +255,12 @@ int SimpleLogger::start() {
 }
 
 int SimpleLogger::stop() {
-    SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
-    mgr->removeLogger(this);
+    if (fs.is_open()) {
+        SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
+        mgr->removeLogger(this);
 
-    _log_sys(this, "Stop logger: %s", filePath.c_str());
-    flushAll();
-    if (fs) {
+        _log_sys(this, "Stop logger: %s", filePath.c_str());
+        flushAll();
         fs.flush();
         fs.close();
     }
