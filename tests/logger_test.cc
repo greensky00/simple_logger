@@ -85,12 +85,35 @@ int logger_mt_test() {
     return 0;
 }
 
+int logger_wo_stack_info_test() {
+    const std::string prefix = TEST_SUITE_AUTO_PREFIX;
+    TestSuite::clearTestFile(prefix);
+    std::string filename = TestSuite::getTestFileName(prefix) + ".log";
+
+    SimpleLogger* ll = new SimpleLogger(filename, 128);
+    ll->start();
+
+    TestSuite::Timer tt(1000);
+
+    do {
+        int level = get_random_level();
+        ll->put(level, nullptr, nullptr, 0, "%ld", tt.getTimeUs());
+    } while(!tt.timeover());
+
+    delete ll;
+
+    SimpleLogger::shutdown();
+    //TestSuite::clearTestFile(prefix);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     TestSuite ts(argc, argv);
 
     ts.options.printTestMessage = true;
     ts.doTest("single thread test", logger_st_test);
     ts.doTest("multi thread test", logger_mt_test);
+    ts.doTest("without stack info test", logger_wo_stack_info_test);
 
     return 0;
 }

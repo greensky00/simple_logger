@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.0
+ * Version: 0.1.1
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -327,9 +327,13 @@ void SimpleLogger::put(int level,
     cur_len += vsnprintf(msg + cur_len, MSG_SIZE - cur_len, format, args);
     va_end(args);
 
-    cur_len += snprintf( msg + cur_len, MSG_SIZE - cur_len, "\t[%s:%zu, %s()]\n",
-                         source_file + ((last_slash)?(last_slash+1):0),
-                         line_number, func_name );
+    if (source_file && func_name) {
+        cur_len += snprintf( msg + cur_len, MSG_SIZE - cur_len, "\t[%s:%zu, %s()]\n",
+                             source_file + ((last_slash)?(last_slash+1):0),
+                             line_number, func_name );
+    } else {
+        cur_len += snprintf(msg + cur_len, MSG_SIZE - cur_len, "\n");
+    }
 
     size_t num = logs.size();
     uint64_t cursor_exp, cursor_val;
@@ -373,12 +377,16 @@ void SimpleLogger::put(int level,
                   tid_hash,
                   colored_lv_names[level] );
 
-    cur_len +=
-        snprintf( msg + cur_len, MSG_SIZE - cur_len,
-                  "[" _CL_GREEN("%s") ":" _CL_B_RED("%zu")
-                  ",\t" _CL_CYAN("%s()") "]\n",
-                  source_file + ((last_slash)?(last_slash+1):0),
-                  line_number, func_name );
+    if (source_file && func_name) {
+        cur_len +=
+            snprintf( msg + cur_len, MSG_SIZE - cur_len,
+                      "[" _CL_GREEN("%s") ":" _CL_B_RED("%zu")
+                      ",\t" _CL_CYAN("%s()") "]\n",
+                      source_file + ((last_slash)?(last_slash+1):0),
+                      line_number, func_name );
+    } else {
+        cur_len += snprintf(msg + cur_len, MSG_SIZE - cur_len, "\n");
+    }
 
     va_start(args, format);
     if (level == 0) {
