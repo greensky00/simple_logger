@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.2
+ * Version: 0.1.3
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -53,24 +53,31 @@
 // 6: Trace   [TRAC]
 
 #define _log_sys(logger_ptr, args...) \
+    if (logger_ptr) \
         (logger_ptr)->put(0, __FILE__, __func__, __LINE__, args)
 
 #define _log_fatal(logger_ptr, args...) \
+    if (logger_ptr) \
         (logger_ptr)->put(1, __FILE__, __func__, __LINE__, args)
 
 #define _log_err(logger_ptr, args...) \
+    if (logger_ptr) \
         (logger_ptr)->put(2, __FILE__, __func__, __LINE__, args)
 
 #define _log_warn(logger_ptr, args...) \
+    if (logger_ptr) \
         (logger_ptr)->put(3, __FILE__, __func__, __LINE__, args)
 
 #define _log_info(logger_ptr, args...) \
+    if (logger_ptr) \
         (logger_ptr)->put(4, __FILE__, __func__, __LINE__, args)
 
 #define _log_debug(logger_ptr, args...) \
+    if (logger_ptr) \
         (logger_ptr)->put(5, __FILE__, __func__, __LINE__, args)
 
 #define _log_trace(logger_ptr, args...) \
+    if (logger_ptr) \
         (logger_ptr)->put(6, __FILE__, __func__, __LINE__, args)
 
 class SimpleLogger {
@@ -124,10 +131,31 @@ public:
 
     static void shutdown();
 
+    static std::string replaceString
+        ( const std::string& src_str,
+          const std::string& before,
+          const std::string& after ) {
+        size_t last = 0;
+        size_t pos = src_str.find(before, last);
+        std::string ret;
+        while (pos != std::string::npos) {
+            ret += src_str.substr(last, pos - last);
+            ret += after;
+            last = pos + before.size();
+            pos = src_str.find(before, last);
+        }
+        if (last < src_str.size()) {
+            ret += src_str.substr(last);
+        }
+        return ret;
+    }
+
     void calcTzGap();
     int start();
     int stop();
+    int getLogLevel() const { return curLogLevel; }
     void setLogLevel(int level);
+    int getDispLevel() const { return curDispLevel; }
     void setDispLevel(int level);
     void put(int level,
              const char* source_file,
@@ -166,14 +194,17 @@ public:
     static SimpleLoggerMgr* get();
     static void destroy();
     static void handleSegFault(int sig);
+    static void handleSegAbort(int sig);
     static void flushWorker();
 
-    void flushAllLoggers() { flushAllLoggers(std::string()); }
-    void flushAllLoggers(const std::string& msg);
+    void flushAllLoggers() { flushAllLoggers(0, std::string()); }
+    void flushAllLoggers(int level, const std::string& msg);
     void addLogger(SimpleLogger* logger);
     void removeLogger(SimpleLogger* logger);
     void sleep(size_t ms);
     bool chkTermination();
+
+    static std::mutex displayLock;
 
 private:
     // Singleton instance and lock.
@@ -190,6 +221,7 @@ private:
     std::condition_variable cvSleep;
     std::mutex cvSleepLock;
     bool termination;
-    void (*oldHandler)(int);
+    void (*oldSigSegvHandler)(int);
+    void (*oldSigAbortHandler)(int);
 };
 

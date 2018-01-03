@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.2
+ * Version: 0.1.3
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -68,6 +68,7 @@
 
 std::atomic<SimpleLoggerMgr*> SimpleLoggerMgr::instance(nullptr);
 std::mutex SimpleLoggerMgr::instanceLock;
+std::mutex SimpleLoggerMgr::displayLock;
 
 static const std::memory_order MOR = std::memory_order_relaxed;
 
@@ -94,7 +95,7 @@ void SimpleLoggerMgr::destroy() {
     std::lock_guard<std::mutex> l(instanceLock);
     SimpleLoggerMgr* mgr = instance.load(MOR);
     if (mgr) {
-        mgr->flushAllLoggers("Shutting down the process");
+        mgr->flushAllLoggers();
         delete mgr;
         instance.store(nullptr, MOR);
     }
@@ -103,16 +104,26 @@ void SimpleLoggerMgr::destroy() {
 void SimpleLoggerMgr::handleSegFault(int sig) {
     printf("SEG FAULT!!\n");
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
-    mgr->flushAllLoggers("Segmentation fault");
+    signal(SIGSEGV, mgr->oldSigSegvHandler);
+    mgr->flushAllLoggers(1, "Segmentation fault");
     printf("Flushed all logs safely.\n");
     fflush(stdout);
-    mgr->oldHandler(sig);
+    mgr->oldSigSegvHandler(sig);
+}
+
+void SimpleLoggerMgr::handleSegAbort(int sig) {
+    printf("ABORT!!\n");
+    SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
+    mgr->flushAllLoggers(1, "Abort");
+    printf("Flushed all logs safely.\n");
+    fflush(stdout);
+    abort();
 }
 
 void SimpleLoggerMgr::flushWorker() {
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     while (!mgr->chkTermination()) {
-        mgr->sleep(100);
+        mgr->sleep(500);
         mgr->flushAllLoggers();
     }
 }
@@ -121,7 +132,8 @@ void SimpleLoggerMgr::flushWorker() {
 SimpleLoggerMgr::SimpleLoggerMgr()
     : termination(false)
 {
-    oldHandler = signal(SIGSEGV, SimpleLoggerMgr::handleSegFault);
+    oldSigSegvHandler = signal(SIGSEGV, SimpleLoggerMgr::handleSegFault);
+    oldSigAbortHandler = signal(SIGABRT, SimpleLoggerMgr::handleSegAbort);
     tFlush = std::thread(SimpleLoggerMgr::flushWorker);
 }
 
@@ -133,12 +145,16 @@ SimpleLoggerMgr::~SimpleLoggerMgr() {
     if (tFlush.joinable()) tFlush.join();
 }
 
-void SimpleLoggerMgr::flushAllLoggers(const std::string& msg) {
+void SimpleLoggerMgr::flushAllLoggers(int level, const std::string& msg) {
     std::unique_lock<std::mutex> l(loggersLock);
     for (auto& entry: loggers) {
         SimpleLogger* logger = entry;
         if (!msg.empty()) {
-            _log_sys(logger, "%s", msg.c_str());
+            if (level == 0) {
+                _log_sys(logger, "%s", msg.c_str());
+            } else {
+                _log_fatal(logger, "%s", msg.c_str());
+            }
         }
         logger->flushAll();
     }
@@ -206,7 +222,7 @@ int SimpleLogger::LogElem::flush(std::ofstream& fs) {
 
 SimpleLogger::SimpleLogger(const std::string file_path,
                            size_t max_log_elems)
-    : filePath(file_path)
+    : filePath(replaceString(file_path, "//", "/"))
     , curLogLevel(6)
     , curDispLevel(4)
     , tzGap(0)
@@ -372,7 +388,7 @@ void SimpleLogger::put(int level,
     cur_len = 0;
     cur_len +=
         snprintf( msg, MSG_SIZE - cur_len,
-                  "[" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") "."
+                  " [" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") "."
                   _CL_BROWN("%03d") " " _CL_BROWN("%03d")
                   "] [tid " _CL_B_BLUE("%04x") "] "
                   "[%s] ",
@@ -384,7 +400,7 @@ void SimpleLogger::put(int level,
         cur_len +=
             snprintf( msg + cur_len, MSG_SIZE - cur_len,
                       "[" _CL_GREEN("%s") ":" _CL_B_RED("%zu")
-                      ",\t" _CL_CYAN("%s()") "]\n",
+                      ", " _CL_CYAN("%s()") "]\n",
                       source_file + ((last_slash)?(last_slash+1):0),
                       line_number, func_name );
     } else {
@@ -401,7 +417,7 @@ void SimpleLogger::put(int level,
     cur_len += snprintf(msg + cur_len, MSG_SIZE - cur_len, _CLM_END);
     va_end(args);
 
-    std::unique_lock<std::mutex> l(displayLock);
+    std::unique_lock<std::mutex> l(SimpleLoggerMgr::displayLock);
     std::cout << msg << std::endl;
     l.unlock();
 }
