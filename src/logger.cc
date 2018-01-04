@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.3
+ * Version: 0.1.4
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -114,6 +114,7 @@ void SimpleLoggerMgr::handleSegFault(int sig) {
 void SimpleLoggerMgr::handleSegAbort(int sig) {
     printf("ABORT!!\n");
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
+    signal(SIGABRT, mgr->oldSigAbortHandler);
     mgr->flushAllLoggers(1, "Abort");
     printf("Flushed all logs safely.\n");
     fflush(stdout);
@@ -123,6 +124,7 @@ void SimpleLoggerMgr::handleSegAbort(int sig) {
 void SimpleLoggerMgr::flushWorker() {
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     while (!mgr->chkTermination()) {
+        // Every 500ms.
         mgr->sleep(500);
         mgr->flushAllLoggers();
     }
@@ -139,10 +141,16 @@ SimpleLoggerMgr::SimpleLoggerMgr()
 
 SimpleLoggerMgr::~SimpleLoggerMgr() {
     termination = true;
+
+    signal(SIGSEGV, oldSigSegvHandler);
+    signal(SIGABRT, oldSigAbortHandler);
+
     std::unique_lock<std::mutex> l(cvSleepLock);
     cvSleep.notify_all();
     l.unlock();
-    if (tFlush.joinable()) tFlush.join();
+    if (tFlush.joinable()) {
+        tFlush.join();
+    }
 }
 
 void SimpleLoggerMgr::flushAllLoggers(int level, const std::string& msg) {
@@ -263,9 +271,10 @@ int SimpleLogger::start() {
     if (!fs) return -1;
 
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
-    mgr->addLogger(this);
+    SimpleLogger* ll = this;
+    mgr->addLogger(ll);
 
-    _log_sys(this, "Start logger: %s", filePath.c_str());
+    _log_sys(ll, "Start logger: %s", filePath.c_str());
 
     return 0;
 }
@@ -273,9 +282,10 @@ int SimpleLogger::start() {
 int SimpleLogger::stop() {
     if (fs.is_open()) {
         SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
-        mgr->removeLogger(this);
+        SimpleLogger* ll = this;
+        mgr->removeLogger(ll);
 
-        _log_sys(this, "Stop logger: %s", filePath.c_str());
+        _log_sys(ll, "Stop logger: %s", filePath.c_str());
         flushAll();
         fs.flush();
         fs.close();
