@@ -23,11 +23,17 @@ int logger_st_test() {
 
     do {
         int level = get_random_level();
-        if (level == 1) _log_fatal(ll, "%ld", tt.getTimeUs());
-        else if (level == 2) _log_err(ll, "%ld", tt.getTimeUs());
-        else if (level == 3) _log_warn(ll, "%ld", tt.getTimeUs());
-        else if (level == 4) _log_info(ll, "%ld", tt.getTimeUs());
-        else if (level == 5) _log_debug(ll, "%ld", tt.getTimeUs());
+        if (level == 1) {
+            _log_fatal(ll, "%ld", tt.getTimeUs());
+        } else if (level == 2) {
+            _log_err(ll, "%ld", tt.getTimeUs());
+        } else if (level == 3) {
+            _log_warn(ll, "%ld", tt.getTimeUs());
+        } else if (level == 4) {
+            _log_info(ll, "%ld", tt.getTimeUs());
+        } else if (level == 5) {
+            _log_debug(ll, "%ld", tt.getTimeUs());
+        }
     } while(!tt.timeover());
 
     delete ll;
@@ -47,11 +53,17 @@ void logger_worker(WorkerArgs* args) {
     TestSuite::Timer& tt = *args->tt;
     do {
         int level = get_random_level();
-        if (level == 1) _log_fatal(ll, "%ld", tt.getTimeUs());
-        else if (level == 2) _log_err(ll, "%ld", tt.getTimeUs());
-        else if (level == 3) _log_warn(ll, "%ld", tt.getTimeUs());
-        else if (level == 4) _log_info(ll, "%ld", tt.getTimeUs());
-        else if (level == 5) _log_debug(ll, "%ld", tt.getTimeUs());
+        if (level == 1) {
+            _log_fatal(ll, "%ld", tt.getTimeUs());
+        } else if (level == 2) {
+            _log_err(ll, "%ld", tt.getTimeUs());
+        } else if (level == 3) {
+            _log_warn(ll, "%ld", tt.getTimeUs());
+        } else if (level == 4) {
+            _log_info(ll, "%ld", tt.getTimeUs());
+        } else if (level == 5) {
+            _log_debug(ll, "%ld", tt.getTimeUs());
+        }
     } while(!tt.timeover());
 }
 

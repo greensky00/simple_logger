@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.4
+ * Version: 0.1.5
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -52,33 +52,26 @@
 // 5: Debug   [DEBG]
 // 6: Trace   [TRAC]
 
-#define _log_sys(logger_ptr, args...) \
-    if (logger_ptr) \
-        (logger_ptr)->put(0, __FILE__, __func__, __LINE__, args)
+#define _log_sys(l, args...) \
+    if (l) (l)->put(0, __FILE__, __func__, __LINE__, args)
 
-#define _log_fatal(logger_ptr, args...) \
-    if (logger_ptr) \
-        (logger_ptr)->put(1, __FILE__, __func__, __LINE__, args)
+#define _log_fatal(l, args...) \
+    if (l) (l)->put(1, __FILE__, __func__, __LINE__, args)
 
-#define _log_err(logger_ptr, args...) \
-    if (logger_ptr) \
-        (logger_ptr)->put(2, __FILE__, __func__, __LINE__, args)
+#define _log_err(l, args...) \
+    if (l) (l)->put(2, __FILE__, __func__, __LINE__, args)
 
-#define _log_warn(logger_ptr, args...) \
-    if (logger_ptr) \
-        (logger_ptr)->put(3, __FILE__, __func__, __LINE__, args)
+#define _log_warn(l, args...) \
+    if (l) (l)->put(3, __FILE__, __func__, __LINE__, args)
 
-#define _log_info(logger_ptr, args...) \
-    if (logger_ptr) \
-        (logger_ptr)->put(4, __FILE__, __func__, __LINE__, args)
+#define _log_info(l, args...) \
+    if (l) (l)->put(4, __FILE__, __func__, __LINE__, args)
 
-#define _log_debug(logger_ptr, args...) \
-    if (logger_ptr) \
-        (logger_ptr)->put(5, __FILE__, __func__, __LINE__, args)
+#define _log_debug(l, args...) \
+    if (l) (l)->put(5, __FILE__, __func__, __LINE__, args)
 
-#define _log_trace(logger_ptr, args...) \
-    if (logger_ptr) \
-        (logger_ptr)->put(6, __FILE__, __func__, __LINE__, args)
+#define _log_trace(l, args...) \
+    if (l) (l)->put(6, __FILE__, __func__, __LINE__, args)
 
 class SimpleLogger {
 private:
