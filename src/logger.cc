@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.5
+ * Version: 0.1.6
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -208,8 +208,8 @@ int SimpleLogger::LogElem::write(size_t _len, char* msg) {
     Status val = WRITING;
     if (!status.compare_exchange_strong(exp, val, MOR)) return -1;
 
-    memcpy(ctx, msg, _len);
-    len = _len;
+    len = (_len > MSG_SIZE) ? MSG_SIZE : _len;
+    memcpy(ctx, msg, len);
     status.store(LogElem::DIRTY, MOR);
     return 0;
 }

@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.5
+ * Version: 0.1.6
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -75,7 +75,7 @@
 
 class SimpleLogger {
 private:
-    static const int MSG_SIZE = 1024;
+    static const int MSG_SIZE = 4096;
 
     struct LogElem {
         enum Status {
