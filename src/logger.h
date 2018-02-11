@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.6
+ * Version: 0.1.7
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -146,7 +146,9 @@ public:
     void calcTzGap();
     int start();
     int stop();
-    int getLogLevel() const { return curLogLevel; }
+    inline int getLogLevel() const { return curLogLevel; }
+    inline bool traceAllowed() { return (curLogLevel >= 6); }
+    inline bool debugAllowed() { return (curLogLevel >= 5); }
     void setLogLevel(int level);
     int getDispLevel() const { return curDispLevel; }
     void setDispLevel(int level);
