@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.7
+ * Version: 0.1.8
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -32,8 +32,11 @@
 #include "logger.h"
 
 #include <iostream>
+
+#include <dirent.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define _CLM_D_GRAY     "\033[1;30m"
 #define _CLM_GREEN      "\033[32m"
@@ -229,8 +232,12 @@ int SimpleLogger::LogElem::flush(std::ofstream& fs) {
 
 
 SimpleLogger::SimpleLogger(const std::string file_path,
-                           size_t max_log_elems)
+                           size_t max_log_elems,
+                           uint32_t log_file_size_limit)
     : filePath(replaceString(file_path, "//", "/"))
+    , curRevnum(findLastRevNum())
+    , maxLogFileSize(log_file_size_limit)
+    , numCompThreads(0)
     , curLogLevel(6)
     , curDispLevel(4)
     , tzGap(0)
@@ -243,6 +250,7 @@ SimpleLogger::SimpleLogger(const std::string file_path,
 
 SimpleLogger::~SimpleLogger() {
     stop();
+    while (numCompThreads) std::this_thread::yield();
 }
 
 void SimpleLogger::shutdown() {
@@ -263,11 +271,50 @@ void SimpleLogger::calcTzGap() {
             ( gmt.day * 60 * 24 + gmt.hour * 60 + gmt.min );
 }
 
+size_t SimpleLogger::findLastRevNum() {
+    DIR *dir_info;
+    struct dirent *dir_entry;
+
+    std::string dir_path = "./";
+    std::string file_name_only = filePath;
+    size_t last_pos = filePath.rfind("/");
+    if (last_pos != std::string::npos) {
+        dir_path = filePath.substr(0, last_pos);
+        file_name_only = filePath.substr
+                         ( last_pos + 1, filePath.size() - last_pos - 1 );
+    }
+
+    size_t max_revnum = 0;
+    dir_info = opendir(dir_path.c_str());
+    while ( dir_info && (dir_entry = readdir(dir_info)) ) {
+        std::string f_name(dir_entry->d_name);
+        size_t f_name_pos = f_name.rfind(file_name_only);
+        // Irrelavent file: skip.
+        if (f_name_pos == std::string::npos) continue;
+
+        size_t last_dot = f_name.rfind(".");
+        if (last_dot == std::string::npos) continue;
+
+        std::string ext = f_name.substr(last_dot + 1, f_name.size() - last_dot - 1);
+        size_t revnum = atoi(ext.c_str());
+        max_revnum = std::max(max_revnum, revnum);
+    }
+    closedir(dir_info);
+    return max_revnum;
+}
+
+std::string SimpleLogger::getLogFilePath(size_t file_num) {
+    if (file_num) {
+        return filePath + "." + std::to_string(file_num);
+    }
+    return filePath;
+}
+
 int SimpleLogger::start() {
     if (filePath.empty()) return 0;
 
     // Append at the end.
-    fs.open(filePath.c_str(), std::ofstream::out | std::ofstream::app);
+    fs.open(getLogFilePath(curRevnum), std::ofstream::out | std::ofstream::app);
     if (!fs) return -1;
 
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
@@ -432,6 +479,21 @@ void SimpleLogger::put(int level,
     l.unlock();
 }
 
+void SimpleLogger::compressThread(size_t file_num) {
+    int r = 0;
+    std::string filename = getLogFilePath(file_num);
+    std::string cmd;
+    cmd = "tar zcvf " + filename + ".tar.gz " + filename;
+    r = system(cmd.c_str());
+    (void)r;
+
+    cmd = "rm -rf " + filename;
+    r = system(cmd.c_str());
+    (void)r;
+
+    numCompThreads.fetch_sub(1);
+}
+
 bool SimpleLogger::flush(size_t start_pos) {
     bool exp = false;
     bool val = true;
@@ -448,6 +510,19 @@ bool SimpleLogger::flush(size_t start_pos) {
         ll.flush(fs);
     }
     fs.flush();
+
+    if (maxLogFileSize && fs.tellp() > maxLogFileSize) {
+        // Exceeded limit, make a new file.
+        curRevnum++;
+        fs.close();
+        fs.open(getLogFilePath(curRevnum), std::ofstream::out | std::ofstream::app);
+
+        // Compress it (tar gz)
+        numCompThreads.fetch_add(1);
+        std::thread t(&SimpleLogger::compressThread, this, curRevnum-1);
+        t.detach();
+    }
+
     flushingLogs.store(false, MOR);
     return true;
 }

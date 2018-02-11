@@ -39,7 +39,7 @@ int logger_st_test() {
     delete ll;
 
     SimpleLogger::shutdown();
-    //TestSuite::clearTestFile(prefix);
+    TestSuite::clearTestFile(prefix, TestSuite::END_OF_TEST);
     return 0;
 }
 
@@ -93,7 +93,7 @@ int logger_mt_test() {
     delete ll;
 
     SimpleLogger::shutdown();
-    //TestSuite::clearTestFile(prefix);
+    TestSuite::clearTestFile(prefix, TestSuite::END_OF_TEST);
     return 0;
 }
 
@@ -115,7 +115,43 @@ int logger_wo_stack_info_test() {
     delete ll;
 
     SimpleLogger::shutdown();
-    //TestSuite::clearTestFile(prefix);
+    TestSuite::clearTestFile(prefix, TestSuite::END_OF_TEST);
+    return 0;
+}
+
+int logger_split_comp_test(uint64_t num) {
+    const std::string prefix = TEST_SUITE_AUTO_PREFIX;
+    TestSuite::clearTestFile(prefix);
+    std::string filename = TestSuite::getTestFileName(prefix) + ".log";
+
+    uint64_t ii=0;
+    SimpleLogger* ll = nullptr;
+    TestSuite::Timer tt;
+
+    ll = new SimpleLogger(filename, 128, 32*1024*1024);
+    ll->start();
+    for (; ii<num/2; ++ii) {
+        if (ii && ii % 100000 == 0) {
+            _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
+        } else {
+            _log_trace(ll, "%ld: %ld", ii, tt.getTimeUs());
+        }
+    }
+    delete ll;
+
+    ll = new SimpleLogger(filename, 128, 32*1024*1024);
+    ll->start();
+    for (; ii<num; ++ii) {
+        if (ii && ii % 100000 == 0) {
+            _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
+        } else {
+            _log_trace(ll, "%ld: %ld", ii, tt.getTimeUs());
+        }
+    }
+    delete ll;
+
+    SimpleLogger::shutdown();
+    TestSuite::clearTestFile(prefix, TestSuite::END_OF_TEST);
     return 0;
 }
 
@@ -126,6 +162,8 @@ int main(int argc, char** argv) {
     ts.doTest("single thread test", logger_st_test);
     ts.doTest("multi thread test", logger_mt_test);
     ts.doTest("without stack info test", logger_wo_stack_info_test);
+    ts.doTest("split compression test", logger_split_comp_test,
+              TestRange<uint64_t>({(uint64_t)1000000}));
 
     return 0;
 }

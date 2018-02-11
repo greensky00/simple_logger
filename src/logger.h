@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.7
+ * Version: 0.1.8
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -119,7 +119,8 @@ private:
 
 public:
     SimpleLogger(const std::string file_path,
-                 size_t max_log_elems = 1024);
+                 size_t max_log_elems = 1024,
+                 uint32_t log_file_size_limit = 0);
     ~SimpleLogger();
 
     static void shutdown();
@@ -143,7 +144,6 @@ public:
         return ret;
     }
 
-    void calcTzGap();
     int start();
     int stop();
     inline int getLogLevel() const { return curLogLevel; }
@@ -161,10 +161,18 @@ public:
     void flushAll();
 
 private:
+    void calcTzGap();
+    size_t findLastRevNum();
+    std::string getLogFilePath(size_t file_num);
+    void compressThread(size_t file_num);
     bool flush(size_t start_pos);
 
     std::string filePath;
+    size_t curRevnum;
     std::ofstream fs;
+
+    uint32_t maxLogFileSize;
+    std::atomic<uint32_t> numCompThreads;
 
     // Log up to `curLogLevel`, default: 6.
     // Disable: -1.
