@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.8
+ * Version: 0.1.11
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -30,6 +30,8 @@
  */
 
 #include "logger.h"
+
+#include "backtrace.h"
 
 #include <iostream>
 
@@ -104,11 +106,23 @@ void SimpleLoggerMgr::destroy() {
     }
 }
 
+void SimpleLoggerMgr::logStackBacktrace() {
+    size_t len = stack_backtrace(stackTraceBuffer, stackTraceBufferSize);
+    if (len) {
+        std::string msg = "\n";
+        msg += globalCriticalInfo + "\n\n";
+        msg += stackTraceBuffer;
+        flushAllLoggers(2, msg);
+    }
+}
+
 void SimpleLoggerMgr::handleSegFault(int sig) {
     printf("SEG FAULT!!\n");
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     signal(SIGSEGV, mgr->oldSigSegvHandler);
     mgr->flushAllLoggers(1, "Segmentation fault");
+    mgr->logStackBacktrace();
+
     printf("Flushed all logs safely.\n");
     fflush(stdout);
     mgr->oldSigSegvHandler(sig);
@@ -119,6 +133,8 @@ void SimpleLoggerMgr::handleSegAbort(int sig) {
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     signal(SIGABRT, mgr->oldSigAbortHandler);
     mgr->flushAllLoggers(1, "Abort");
+    mgr->logStackBacktrace();
+
     printf("Flushed all logs safely.\n");
     fflush(stdout);
     abort();
@@ -136,10 +152,15 @@ void SimpleLoggerMgr::flushWorker() {
 
 SimpleLoggerMgr::SimpleLoggerMgr()
     : termination(false)
+    , oldSigSegvHandler(nullptr)
+    , oldSigAbortHandler(nullptr)
+    , stackTraceBuffer(nullptr)
 {
     oldSigSegvHandler = signal(SIGSEGV, SimpleLoggerMgr::handleSegFault);
     oldSigAbortHandler = signal(SIGABRT, SimpleLoggerMgr::handleSegAbort);
     tFlush = std::thread(SimpleLoggerMgr::flushWorker);
+
+    stackTraceBuffer = (char*)malloc(stackTraceBufferSize);
 }
 
 SimpleLoggerMgr::~SimpleLoggerMgr() {
@@ -154,18 +175,17 @@ SimpleLoggerMgr::~SimpleLoggerMgr() {
     if (tFlush.joinable()) {
         tFlush.join();
     }
+
+    free(stackTraceBuffer);
 }
 
 void SimpleLoggerMgr::flushAllLoggers(int level, const std::string& msg) {
     std::unique_lock<std::mutex> l(loggersLock);
     for (auto& entry: loggers) {
         SimpleLogger* logger = entry;
+        if (!logger) continue;
         if (!msg.empty()) {
-            if (level == 0) {
-                _log_sys(logger, "%s", msg.c_str());
-            } else {
-                _log_fatal(logger, "%s", msg.c_str());
-            }
+            logger->put(level, __FILE__, __func__, __LINE__, "%s", msg.c_str());
         }
         logger->flushAll();
     }
@@ -186,14 +206,21 @@ void SimpleLoggerMgr::sleep(size_t ms) {
     cvSleep.wait_for(l, std::chrono::milliseconds(ms));
 }
 
-bool SimpleLoggerMgr::chkTermination() {
+bool SimpleLoggerMgr::chkTermination() const {
     return termination;
 }
+
+void SimpleLoggerMgr::setCriticalInfo(const std::string& info_str) {
+    globalCriticalInfo = info_str;
+}
+
 
 
 // ==========================================
 
-SimpleLogger::LogElem::LogElem() : len(0), status(CLEAN) {}
+SimpleLogger::LogElem::LogElem() : len(0), status(CLEAN) {
+    memset(ctx, 0x0, MSG_SIZE);
+}
 
 // True if dirty.
 bool SimpleLogger::LogElem::needToFlush() {
@@ -231,7 +258,7 @@ int SimpleLogger::LogElem::flush(std::ofstream& fs) {
 // ==========================================
 
 
-SimpleLogger::SimpleLogger(const std::string file_path,
+SimpleLogger::SimpleLogger(const std::string& file_path,
                            size_t max_log_elems,
                            uint32_t log_file_size_limit)
     : filePath(replaceString(file_path, "//", "/"))
@@ -303,7 +330,7 @@ size_t SimpleLogger::findLastRevNum() {
     return max_revnum;
 }
 
-std::string SimpleLogger::getLogFilePath(size_t file_num) {
+std::string SimpleLogger::getLogFilePath(size_t file_num) const {
     if (file_num) {
         return filePath + "." + std::to_string(file_num);
     }

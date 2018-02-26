@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.8
+ * Version: 0.1.11
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -118,7 +118,7 @@ private:
     };
 
 public:
-    SimpleLogger(const std::string file_path,
+    SimpleLogger(const std::string& file_path,
                  size_t max_log_elems = 1024,
                  uint32_t log_file_size_limit = 0);
     ~SimpleLogger();
@@ -147,8 +147,8 @@ public:
     int start();
     int stop();
     inline int getLogLevel() const { return curLogLevel; }
-    inline bool traceAllowed() { return (curLogLevel >= 6); }
-    inline bool debugAllowed() { return (curLogLevel >= 5); }
+    inline bool traceAllowed() const { return (curLogLevel >= 6); }
+    inline bool debugAllowed() const { return (curLogLevel >= 5); }
     void setLogLevel(int level);
     int getDispLevel() const { return curDispLevel; }
     void setDispLevel(int level);
@@ -163,7 +163,7 @@ public:
 private:
     void calcTzGap();
     size_t findLastRevNum();
-    std::string getLogFilePath(size_t file_num);
+    std::string getLogFilePath(size_t file_num) const;
     void compressThread(size_t file_num);
     bool flush(size_t start_pos);
 
@@ -200,16 +200,24 @@ public:
     static void handleSegAbort(int sig);
     static void flushWorker();
 
+    void logStackBacktrace();
     void flushAllLoggers() { flushAllLoggers(0, std::string()); }
     void flushAllLoggers(int level, const std::string& msg);
     void addLogger(SimpleLogger* logger);
     void removeLogger(SimpleLogger* logger);
     void sleep(size_t ms);
-    bool chkTermination();
+    bool chkTermination() const;
+    void setCriticalInfo(const std::string& info_str);
 
     static std::mutex displayLock;
 
 private:
+    // Copy is not allowed.
+    SimpleLoggerMgr(const SimpleLoggerMgr&) = delete;
+    SimpleLoggerMgr& operator=(const SimpleLoggerMgr&) = delete;
+
+    static const size_t stackTraceBufferSize = 65536;
+
     // Singleton instance and lock.
     static std::atomic<SimpleLoggerMgr*> instance;
     static std::mutex instanceLock;
@@ -226,5 +234,11 @@ private:
     bool termination;
     void (*oldSigSegvHandler)(int);
     void (*oldSigAbortHandler)(int);
+
+    // Critical info that will be displayed on crash.
+    std::string globalCriticalInfo;
+
+    // Reserve some buffer for stack trace.
+    char* stackTraceBuffer;
 };
 
