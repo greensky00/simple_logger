@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.13
+ * Version: 0.1.14
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -74,9 +74,10 @@
     if (l) (l)->put(6, __FILE__, __func__, __LINE__, args)
 
 class SimpleLogger {
-private:
+public:
     static const int MSG_SIZE = 4096;
 
+private:
     struct LogElem {
         enum Status {
             CLEAN = 0,

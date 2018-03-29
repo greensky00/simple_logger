@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.13
+ * Version: 0.1.14
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -111,8 +111,13 @@ void SimpleLoggerMgr::logStackBacktrace() {
     if (len) {
         std::string msg = "\n";
         msg += globalCriticalInfo + "\n\n";
-        msg += stackTraceBuffer;
-        flushAllLoggers(2, msg);
+        msg += std::string(stackTraceBuffer, len);
+
+        size_t msg_len = msg.size();
+        size_t per_log_size = SimpleLogger::MSG_SIZE - 256;
+        for (size_t ii=0; ii<msg_len; ii+=per_log_size) {
+            flushAllLoggers(2, msg.substr(ii, per_log_size));
+        }
     }
 }
 
