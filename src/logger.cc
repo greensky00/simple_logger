@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.11
+ * Version: 0.1.13
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -214,6 +214,9 @@ void SimpleLoggerMgr::setCriticalInfo(const std::string& info_str) {
     globalCriticalInfo = info_str;
 }
 
+const std::string& SimpleLoggerMgr::getCriticalInfo() const {
+    return globalCriticalInfo;
+}
 
 
 // ==========================================
@@ -350,6 +353,11 @@ int SimpleLogger::start() {
 
     _log_sys(ll, "Start logger: %s", filePath.c_str());
 
+    const std::string& critical_info = mgr->getCriticalInfo();
+    if (!critical_info.empty()) {
+        _log_info(ll, "%s", critical_info.c_str());
+    }
+
     return 0;
 }
 
@@ -378,6 +386,16 @@ void SimpleLogger::setDispLevel(int level) {
     if (level > 6) return;
     curDispLevel = level;
 }
+
+#define _snprintf(msg, avail_len, cur_len, msg_len, args...)        \
+    avail_len = (avail_len > cur_len) ? (avail_len - cur_len) : 0;  \
+    msg_len = snprintf( msg + cur_len, avail_len, args );           \
+    cur_len += (avail_len > msg_len) ? msg_len : avail_len
+
+#define _vsnprintf(msg, avail_len, cur_len, msg_len, args...)       \
+    avail_len = (avail_len > cur_len) ? (avail_len - cur_len) : 0;  \
+    msg_len = vsnprintf( msg + cur_len, avail_len, args );          \
+    cur_len += (avail_len > msg_len) ? msg_len : avail_len
 
 void SimpleLogger::put(int level,
                        const char* source_file,
@@ -416,26 +434,31 @@ void SimpleLogger::put(int level,
     // [time] [tid] [log type] [user msg] [stack info]
     // Timestamp: ISO 8601 format.
     size_t cur_len = 0;
-    cur_len += snprintf( msg, MSG_SIZE - cur_len,
-                         "%04d-%02d-%02dT%02d:%02d:%02d.%03d%c%02d:%02d "
-                         "[%04x] "
-                         "[%s] ",
-                         lt.year, lt.month, lt.day,
-                         lt.hour, lt.min, lt.sec, ms,
-                         (tzGap >= 0)?'+':'-', tz_gap_abs / 60, tz_gap_abs % 60,
-                         tid_hash,
-                         lv_names[level] );
+    size_t avail_len = MSG_SIZE;
+    size_t msg_len = 0;
+
+    _snprintf(msg, avail_len, cur_len, msg_len,
+              "%04d-%02d-%02dT%02d:%02d:%02d.%03d%c%02d:%02d "
+              "[%04x] "
+              "[%s] ",
+              lt.year, lt.month, lt.day,
+              lt.hour, lt.min, lt.sec, ms,
+              (tzGap >= 0)?'+':'-', tz_gap_abs / 60, tz_gap_abs % 60,
+              tid_hash,
+              lv_names[level] );
+
     va_list args;
     va_start(args, format);
-    cur_len += vsnprintf(msg + cur_len, MSG_SIZE - cur_len, format, args);
+    _vsnprintf(msg, avail_len, cur_len, msg_len, format, args);
     va_end(args);
 
     if (source_file && func_name) {
-        cur_len += snprintf( msg + cur_len, MSG_SIZE - cur_len, "\t[%s:%zu, %s()]\n",
-                             source_file + ((last_slash)?(last_slash+1):0),
-                             line_number, func_name );
+        _snprintf(msg, avail_len, cur_len, msg_len,
+                  "\t[%s:%zu, %s()]\n",
+                  source_file + ((last_slash)?(last_slash+1):0),
+                  line_number, func_name );
     } else {
-        cur_len += snprintf(msg + cur_len, MSG_SIZE - cur_len, "\n");
+        _snprintf(msg, avail_len, cur_len, msg_len, "\n");
     }
 
     size_t num = logs.size();
@@ -470,36 +493,36 @@ void SimpleLogger::put(int level,
                             ( now.time_since_epoch() ).count() % 1000 );
 
     cur_len = 0;
-    cur_len +=
-        snprintf( msg, MSG_SIZE - cur_len,
-                  " [" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") "."
-                  _CL_BROWN("%03d") " " _CL_BROWN("%03d")
-                  "] [tid " _CL_B_BLUE("%04x") "] "
-                  "[%s] ",
-                  lt.hour, lt.min, lt.sec, ms, us,
-                  tid_hash,
-                  colored_lv_names[level] );
+    avail_len = MSG_SIZE;
+    _snprintf(msg, avail_len, cur_len, msg_len,
+              " [" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") "."
+              _CL_BROWN("%03d") " " _CL_BROWN("%03d")
+              "] [tid " _CL_B_BLUE("%04x") "] "
+              "[%s] ",
+              lt.hour, lt.min, lt.sec, ms, us,
+              tid_hash,
+              colored_lv_names[level] );
 
     if (source_file && func_name) {
-        cur_len +=
-            snprintf( msg + cur_len, MSG_SIZE - cur_len,
-                      "[" _CL_GREEN("%s") ":" _CL_B_RED("%zu")
-                      ", " _CL_CYAN("%s()") "]\n",
-                      source_file + ((last_slash)?(last_slash+1):0),
-                      line_number, func_name );
+        _snprintf(msg, avail_len, cur_len, msg_len,
+                  "[" _CL_GREEN("%s") ":" _CL_B_RED("%zu")
+                  ", " _CL_CYAN("%s()") "]\n",
+                  source_file + ((last_slash)?(last_slash+1):0),
+                  line_number, func_name );
     } else {
-        cur_len += snprintf(msg + cur_len, MSG_SIZE - cur_len, "\n");
+        _snprintf(msg, avail_len, cur_len, msg_len, "\n");
     }
 
     va_start(args, format);
     if (level == 0) {
-        cur_len += snprintf(msg + cur_len, MSG_SIZE - cur_len, _CLM_B_BROWN);
+        _snprintf(msg, avail_len, cur_len, msg_len, _CLM_B_BROWN);
     } else if (level == 1) {
-        cur_len += snprintf(msg + cur_len, MSG_SIZE - cur_len, _CLM_B_RED);
+        _snprintf(msg, avail_len, cur_len, msg_len, _CLM_B_RED);
     }
-    cur_len += vsnprintf(msg + cur_len, MSG_SIZE - cur_len, format, args);
-    cur_len += snprintf(msg + cur_len, MSG_SIZE - cur_len, _CLM_END);
+    _vsnprintf(msg, avail_len, cur_len, msg_len, format, args);
+    _snprintf(msg, avail_len, cur_len, msg_len, _CLM_END);
     va_end(args);
+    (void)cur_len;
 
     std::unique_lock<std::mutex> l(SimpleLoggerMgr::displayLock);
     std::cout << msg << std::endl;

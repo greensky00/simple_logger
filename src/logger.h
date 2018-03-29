@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.11
+ * Version: 0.1.13
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -208,6 +208,7 @@ public:
     void sleep(size_t ms);
     bool chkTermination() const;
     void setCriticalInfo(const std::string& info_str);
+    const std::string& getCriticalInfo() const;
 
     static std::mutex displayLock;
 
