@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.14
+ * Version: 0.1.15
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -538,11 +538,12 @@ void SimpleLogger::compressThread(size_t file_num) {
     int r = 0;
     std::string filename = getLogFilePath(file_num);
     std::string cmd;
-    cmd = "tar zcvf " + filename + ".tar.gz " + filename;
+    cmd = "tar zcvf " + filename + ".tar.gz " + filename +
+          " > /dev/null";
     r = system(cmd.c_str());
     (void)r;
 
-    cmd = "rm -rf " + filename;
+    cmd = "rm -rf " + filename + " > /dev/null";
     r = system(cmd.c_str());
     (void)r;
 
