@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.15
+ * Version: 0.1.18
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -40,22 +40,40 @@
 #include <string.h>
 #include <unistd.h>
 
-#define _CLM_D_GRAY     "\033[1;30m"
-#define _CLM_GREEN      "\033[32m"
-#define _CLM_B_GREEN    "\033[1;32m"
-#define _CLM_RED        "\033[31m"
-#define _CLM_B_RED      "\033[1;31m"
-#define _CLM_BROWN      "\033[33m"
-#define _CLM_B_BROWN    "\033[1;33m"
-#define _CLM_BLUE       "\033[34m"
-#define _CLM_B_BLUE     "\033[1;34m"
-#define _CLM_MAGENTA    "\033[35m"
-#define _CLM_B_MAGENTA  "\033[1;35m"
-#define _CLM_CYAN       "\033[36m"
-#define _CLM_B_GREY     "\033[1;37m"
-#define _CLM_END        "\033[0m"
+#ifdef LOGGER_NO_COLOR
+    #define _CLM_D_GRAY     ""
+    #define _CLM_GREEN      ""
+    #define _CLM_B_GREEN    ""
+    #define _CLM_RED        ""
+    #define _CLM_B_RED      ""
+    #define _CLM_BROWN      ""
+    #define _CLM_B_BROWN    ""
+    #define _CLM_BLUE       ""
+    #define _CLM_B_BLUE     ""
+    #define _CLM_MAGENTA    ""
+    #define _CLM_B_MAGENTA  ""
+    #define _CLM_CYAN       ""
+    #define _CLM_END        ""
 
-#define _CLM_WHITE_FG_RED_BG    "\033[37;41m"
+    #define _CLM_WHITE_FG_RED_BG    ""
+#else
+    #define _CLM_D_GRAY     "\033[1;30m"
+    #define _CLM_GREEN      "\033[32m"
+    #define _CLM_B_GREEN    "\033[1;32m"
+    #define _CLM_RED        "\033[31m"
+    #define _CLM_B_RED      "\033[1;31m"
+    #define _CLM_BROWN      "\033[33m"
+    #define _CLM_B_BROWN    "\033[1;33m"
+    #define _CLM_BLUE       "\033[34m"
+    #define _CLM_B_BLUE     "\033[1;34m"
+    #define _CLM_MAGENTA    "\033[35m"
+    #define _CLM_B_MAGENTA  "\033[1;35m"
+    #define _CLM_CYAN       "\033[36m"
+    #define _CLM_B_GREY     "\033[1;37m"
+    #define _CLM_END        "\033[0m"
+
+    #define _CLM_WHITE_FG_RED_BG    "\033[37;41m"
+#endif
 
 #define _CL_D_GRAY(str)     _CLM_D_GRAY     str _CLM_END
 #define _CL_GREEN(str)      _CLM_GREEN      str _CLM_END
@@ -96,6 +114,11 @@ SimpleLoggerMgr* SimpleLoggerMgr::get() {
     return mgr;
 }
 
+SimpleLoggerMgr* SimpleLoggerMgr::getWithoutInit() {
+    SimpleLoggerMgr* mgr = instance.load(MOR);
+    return mgr;
+}
+
 void SimpleLoggerMgr::destroy() {
     std::lock_guard<std::mutex> l(instanceLock);
     SimpleLoggerMgr* mgr = instance.load(MOR);
@@ -114,7 +137,7 @@ void SimpleLoggerMgr::logStackBacktrace() {
         msg += std::string(stackTraceBuffer, len);
 
         size_t msg_len = msg.size();
-        size_t per_log_size = SimpleLogger::MSG_SIZE - 256;
+        size_t per_log_size = SimpleLogger::MSG_SIZE - 1024;
         for (size_t ii=0; ii<msg_len; ii+=per_log_size) {
             flushAllLoggers(2, msg.substr(ii, per_log_size));
         }
@@ -289,8 +312,10 @@ SimpleLogger::~SimpleLogger() {
 }
 
 void SimpleLogger::shutdown() {
-    SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
-    mgr->destroy();
+    SimpleLoggerMgr* mgr = SimpleLoggerMgr::getWithoutInit();
+    if (mgr) {
+        mgr->destroy();
+    }
 }
 
 void SimpleLogger::calcTzGap() {
@@ -519,13 +544,21 @@ void SimpleLogger::put(int level,
     }
 
     va_start(args, format);
+
+#ifndef LOGGER_NO_COLOR
     if (level == 0) {
         _snprintf(msg, avail_len, cur_len, msg_len, _CLM_B_BROWN);
     } else if (level == 1) {
         _snprintf(msg, avail_len, cur_len, msg_len, _CLM_B_RED);
     }
+#endif
+
     _vsnprintf(msg, avail_len, cur_len, msg_len, format, args);
+
+#ifndef LOGGER_NO_COLOR
     _snprintf(msg, avail_len, cur_len, msg_len, _CLM_END);
+#endif
+
     va_end(args);
     (void)cur_len;
 

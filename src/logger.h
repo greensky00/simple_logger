@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.15
+ * Version: 0.1.18
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -196,6 +196,7 @@ class SimpleLoggerMgr {
 public:
     static SimpleLoggerMgr* init();
     static SimpleLoggerMgr* get();
+    static SimpleLoggerMgr* getWithoutInit();
     static void destroy();
     static void handleSegFault(int sig);
     static void handleSegAbort(int sig);
