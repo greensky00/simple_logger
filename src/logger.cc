@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.18
+ * Version: 0.1.19
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -39,6 +39,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#ifndef _CLM_DEFINED
+#define _CLM_DEFINED (1)
 
 #ifdef LOGGER_NO_COLOR
     #define _CLM_D_GRAY     ""
@@ -88,6 +91,8 @@
 #define _CL_B_GRAY(str)     _CLM_B_GREY     str _CLM_END
 
 #define _CL_WHITE_FG_RED_BG(str)    _CLM_WHITE_FG_RED_BG    str _CLM_END
+
+#endif
 
 std::atomic<SimpleLoggerMgr*> SimpleLoggerMgr::instance(nullptr);
 std::mutex SimpleLoggerMgr::instanceLock;
@@ -291,9 +296,10 @@ int SimpleLogger::LogElem::flush(std::ofstream& fs) {
 
 SimpleLogger::SimpleLogger(const std::string& file_path,
                            size_t max_log_elems,
-                           uint32_t log_file_size_limit)
+                           uint32_t log_file_size_limit,
+                           uint32_t max_log_files)
     : filePath(replaceString(file_path, "//", "/"))
-    , curRevnum(findLastRevNum())
+    , maxLogFiles(max_log_files)
     , maxLogFileSize(log_file_size_limit)
     , numCompThreads(0)
     , curLogLevel(6)
@@ -303,6 +309,7 @@ SimpleLogger::SimpleLogger(const std::string& file_path,
     , logs(max_log_elems)
     , flushingLogs(false)
 {
+    findMinMaxRevNum(minRevnum, curRevnum);
     calcTzGap();
 }
 
@@ -331,7 +338,9 @@ void SimpleLogger::calcTzGap() {
             ( gmt.day * 60 * 24 + gmt.hour * 60 + gmt.min );
 }
 
-size_t SimpleLogger::findLastRevNum() {
+void SimpleLogger::findMinMaxRevNum(size_t& min_revnum_out,
+                                    size_t& max_revnum_out)
+{
     DIR *dir_info;
     struct dirent *dir_entry;
 
@@ -344,6 +353,7 @@ size_t SimpleLogger::findLastRevNum() {
                          ( last_pos + 1, filePath.size() - last_pos - 1 );
     }
 
+    size_t min_revnum = 0;
     size_t max_revnum = 0;
     dir_info = opendir(dir_path.c_str());
     while ( dir_info && (dir_entry = readdir(dir_info)) ) {
@@ -355,12 +365,26 @@ size_t SimpleLogger::findLastRevNum() {
         size_t last_dot = f_name.rfind(".");
         if (last_dot == std::string::npos) continue;
 
+        bool comp_file = false;
         std::string ext = f_name.substr(last_dot + 1, f_name.size() - last_dot - 1);
+        if (ext == "gz" && f_name.size() > 7) {
+            // Compressed file: asdf.log.123.tar.gz => need to get 123.
+            f_name = f_name.substr(0, f_name.size() - 7);
+            last_dot = f_name.rfind(".");
+            if (last_dot == std::string::npos) continue;
+            ext = f_name.substr(last_dot + 1, f_name.size() - last_dot - 1);
+            comp_file = true;
+        }
+
         size_t revnum = atoi(ext.c_str());
-        max_revnum = std::max(max_revnum, revnum);
+        max_revnum = std::max(max_revnum, ((comp_file)?(revnum+1):(revnum)) );
+        if (!min_revnum) min_revnum = revnum;
+        min_revnum = std::min(min_revnum, revnum);
     }
     closedir(dir_info);
-    return max_revnum;
+
+    min_revnum_out = min_revnum;
+    max_revnum_out = max_revnum;
 }
 
 std::string SimpleLogger::getLogFilePath(size_t file_num) const {
@@ -576,9 +600,21 @@ void SimpleLogger::compressThread(size_t file_num) {
     r = system(cmd.c_str());
     (void)r;
 
-    cmd = "rm -rf " + filename + " > /dev/null";
+    cmd = "rm -f " + filename + " > /dev/null";
     r = system(cmd.c_str());
     (void)r;
+
+    // Remove previous log files.
+    if (maxLogFiles && file_num >= maxLogFiles) {
+        for (size_t ii=minRevnum; ii<=file_num-maxLogFiles; ++ii) {
+            filename = getLogFilePath(ii);
+            std::string filename_tar = getLogFilePath(ii) + ".tar.gz";
+            cmd = "rm -f " + filename + " " + filename_tar + " > /dev/null";
+            r = system(cmd.c_str());
+            (void)r;
+            minRevnum = ii+1;
+        }
+    }
 
     numCompThreads.fetch_sub(1);
 }

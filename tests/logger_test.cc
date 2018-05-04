@@ -164,7 +164,7 @@ int logger_reopen_with_split_option_test(uint64_t num) {
     SimpleLogger* ll = nullptr;
     TestSuite::Timer tt;
 
-    ll = new SimpleLogger(filename, 128);
+    ll = new SimpleLogger(filename, 128, 256*1024*1024);
     ll->start();
     for (; ii<num/2; ++ii) {
         if (ii && ii % 100000 == 0) {
@@ -191,16 +191,102 @@ int logger_reopen_with_split_option_test(uint64_t num) {
     return 0;
 }
 
+int logger_reclaim_test(uint64_t num) {
+    const std::string prefix = TEST_SUITE_AUTO_PREFIX;
+    TestSuite::clearTestFile(prefix);
+    std::string filename = TestSuite::getTestFileName(prefix) + ".log";
+
+    uint64_t ii=0;
+    SimpleLogger* ll = nullptr;
+    TestSuite::Timer tt;
+
+    ll = new SimpleLogger(filename, 128, 1024*1024, 4);
+    ll->start();
+    for (; ii<num/2; ++ii) {
+        if (ii && ii % 100000 == 0) {
+            _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
+        } else {
+            _log_trace(ll, "%ld: %ld", ii, tt.getTimeUs());
+        }
+    }
+    delete ll;
+
+    ll = new SimpleLogger(filename, 128, 1024*1024, 4);
+    ll->start();
+    for (; ii<num; ++ii) {
+        if (ii && ii % 100000 == 0) {
+            _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
+        } else {
+            _log_trace(ll, "%ld: %ld", ii, tt.getTimeUs());
+        }
+    }
+    delete ll;
+
+    SimpleLogger::shutdown();
+    TestSuite::clearTestFile(prefix, TestSuite::END_OF_TEST);
+    return 0;
+}
+
+int logger_reopen_with_reclaim_option_test(uint64_t num) {
+    const std::string prefix = TEST_SUITE_AUTO_PREFIX;
+    TestSuite::clearTestFile(prefix);
+    std::string filename = TestSuite::getTestFileName(prefix) + ".log";
+
+    uint64_t ii=0;
+    SimpleLogger* ll = nullptr;
+    TestSuite::Timer tt;
+
+    ll = new SimpleLogger(filename, 128, 1024*1024, 0);
+    ll->start();
+    for (; ii<num/2; ++ii) {
+        if (ii && ii % 100000 == 0) {
+            _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
+        } else {
+            _log_trace(ll, "%ld: %ld", ii, tt.getTimeUs());
+        }
+    }
+    delete ll;
+
+    ll = new SimpleLogger(filename, 128, 1024*1024, 4);
+    ll->start();
+    for (; ii<num; ++ii) {
+        if (ii && ii % 100000 == 0) {
+            _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
+        } else {
+            _log_trace(ll, "%ld: %ld", ii, tt.getTimeUs());
+        }
+    }
+    delete ll;
+
+    SimpleLogger::shutdown();
+    TestSuite::clearTestFile(prefix, TestSuite::END_OF_TEST);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     TestSuite ts(argc, argv);
 
     ts.options.printTestMessage = true;
     ts.doTest("single thread test", logger_st_test);
+
     ts.doTest("multi thread test", logger_mt_test);
+
     ts.doTest("without stack info test", logger_wo_stack_info_test);
-    ts.doTest("split compression test", logger_split_comp_test,
+
+    ts.doTest("split compression test",
+              logger_split_comp_test,
               TestRange<uint64_t>({(uint64_t)1000000}));
-    ts.doTest("reopen with split option test", logger_reopen_with_split_option_test,
+
+    ts.doTest("reopen with split option test",
+              logger_reopen_with_split_option_test,
+              TestRange<uint64_t>({(uint64_t)1000000}));
+
+    ts.doTest("reclaim basic test",
+              logger_reclaim_test,
+              TestRange<uint64_t>({(uint64_t)1000000}));
+
+    ts.doTest("reopen with reclaim option test",
+              logger_reopen_with_reclaim_option_test,
               TestRange<uint64_t>({(uint64_t)1000000}));
 
     return 0;

@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.18
+ * Version: 0.1.19
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -120,8 +120,9 @@ private:
 
 public:
     SimpleLogger(const std::string& file_path,
-                 size_t max_log_elems = 1024,
-                 uint32_t log_file_size_limit = 0);
+                 size_t max_log_elems = 4096,
+                 uint32_t log_file_size_limit = 32*1024*1024,
+                 uint32_t max_log_files = 16);
     ~SimpleLogger();
 
     static void shutdown();
@@ -163,13 +164,16 @@ public:
 
 private:
     void calcTzGap();
-    size_t findLastRevNum();
+    void findMinMaxRevNum(size_t& min_revnum_out,
+                          size_t& max_revnum_out);
     std::string getLogFilePath(size_t file_num) const;
     void compressThread(size_t file_num);
     bool flush(size_t start_pos);
 
     std::string filePath;
+    size_t minRevnum;
     size_t curRevnum;
+    size_t maxLogFiles;
     std::ofstream fs;
 
     uint32_t maxLogFileSize;
