@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.1.19
+ * Version: 0.2.1
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -296,13 +296,13 @@ int SimpleLogger::LogElem::flush(std::ofstream& fs) {
 
 SimpleLogger::SimpleLogger(const std::string& file_path,
                            size_t max_log_elems,
-                           uint32_t log_file_size_limit,
+                           uint64_t log_file_size_limit,
                            uint32_t max_log_files)
     : filePath(replaceString(file_path, "//", "/"))
     , maxLogFiles(max_log_files)
     , maxLogFileSize(log_file_size_limit)
     , numCompThreads(0)
-    , curLogLevel(6)
+    , curLogLevel(4)
     , curDispLevel(4)
     , tzGap(0)
     , cursor(0)
@@ -325,6 +325,25 @@ void SimpleLogger::shutdown() {
     }
 }
 
+std::string SimpleLogger::replaceString( const std::string& src_str,
+                                         const std::string& before,
+                                         const std::string& after )
+{
+    size_t last = 0;
+    size_t pos = src_str.find(before, last);
+    std::string ret;
+    while (pos != std::string::npos) {
+        ret += src_str.substr(last, pos - last);
+        ret += after;
+        last = pos + before.size();
+        pos = src_str.find(before, last);
+    }
+    if (last < src_str.size()) {
+        ret += src_str.substr(last);
+    }
+    return ret;
+}
+
 void SimpleLogger::calcTzGap() {
     std::chrono::system_clock::time_point now =
         std::chrono::system_clock::now();
@@ -338,8 +357,8 @@ void SimpleLogger::calcTzGap() {
             ( gmt.day * 60 * 24 + gmt.hour * 60 + gmt.min );
 }
 
-void SimpleLogger::findMinMaxRevNum(size_t& min_revnum_out,
-                                    size_t& max_revnum_out)
+void SimpleLogger::findMinMaxRevNum( size_t& min_revnum_out,
+                                     size_t& max_revnum_out )
 {
     DIR *dir_info;
     struct dirent *dir_entry;
@@ -353,6 +372,7 @@ void SimpleLogger::findMinMaxRevNum(size_t& min_revnum_out,
                          ( last_pos + 1, filePath.size() - last_pos - 1 );
     }
 
+    bool min_revnum_initialized = false;
     size_t min_revnum = 0;
     size_t max_revnum = 0;
     dir_info = opendir(dir_path.c_str());
@@ -377,8 +397,12 @@ void SimpleLogger::findMinMaxRevNum(size_t& min_revnum_out,
         }
 
         size_t revnum = atoi(ext.c_str());
-        max_revnum = std::max(max_revnum, ((comp_file)?(revnum+1):(revnum)) );
-        if (!min_revnum) min_revnum = revnum;
+        max_revnum = std::max( max_revnum,
+                               ( (comp_file) ? (revnum+1) : (revnum) ) );
+        if (!min_revnum_initialized) {
+            min_revnum = revnum;
+            min_revnum_initialized = true;
+        }
         min_revnum = std::min(min_revnum, revnum);
     }
     closedir(dir_info);
@@ -405,7 +429,10 @@ int SimpleLogger::start() {
     SimpleLogger* ll = this;
     mgr->addLogger(ll);
 
-    _log_sys(ll, "Start logger: %s", filePath.c_str());
+    _log_sys(ll, "Start logger: %s (%zu MB per file, up to %zu files)",
+             filePath.c_str(),
+             maxLogFileSize / 1024 / 1024,
+             maxLogFiles);
 
     const std::string& critical_info = mgr->getCriticalInfo();
     if (!critical_info.empty()) {
@@ -433,11 +460,13 @@ int SimpleLogger::stop() {
 void SimpleLogger::setLogLevel(int level) {
     if (level > 6) return;
     if (!fs) return;
+
     curLogLevel = level;
 }
 
 void SimpleLogger::setDispLevel(int level) {
     if (level > 6) return;
+
     curDispLevel = level;
 }
 
@@ -480,10 +509,11 @@ void SimpleLogger::put(int level,
     std::tm* lt_tm = std::localtime(&raw_time);
     TimeInfo lt(lt_tm);
 
+    size_t us_epoch = std::chrono::duration_cast< std::chrono::microseconds >
+                      ( now.time_since_epoch() ).count();
+    size_t ms = (us_epoch / 1000) % 1000;
+    size_t us = us_epoch % 1000;
     int tz_gap_abs = (tzGap < 0) ? (tzGap * -1) : (tzGap);
-    int ms = (int)( std::chrono::duration_cast
-                        <std::chrono::milliseconds>
-                            ( now.time_since_epoch() ).count() % 1000 );
 
     // [time] [tid] [log type] [user msg] [stack info]
     // Timestamp: ISO 8601 format.
@@ -491,15 +521,15 @@ void SimpleLogger::put(int level,
     size_t avail_len = MSG_SIZE;
     size_t msg_len = 0;
 
-    _snprintf(msg, avail_len, cur_len, msg_len,
-              "%04d-%02d-%02dT%02d:%02d:%02d.%03d%c%02d:%02d "
-              "[%04x] "
-              "[%s] ",
-              lt.year, lt.month, lt.day,
-              lt.hour, lt.min, lt.sec, ms,
-              (tzGap >= 0)?'+':'-', tz_gap_abs / 60, tz_gap_abs % 60,
-              tid_hash,
-              lv_names[level] );
+    _snprintf( msg, avail_len, cur_len, msg_len,
+               "%04d-%02d-%02dT%02d:%02d:%02d.%03zu_%03zu%c%02d:%02d "
+               "[%04x] "
+               "[%s] ",
+               lt.year, lt.month, lt.day,
+               lt.hour, lt.min, lt.sec, ms, us,
+               (tzGap >= 0)?'+':'-', tz_gap_abs / 60, tz_gap_abs % 60,
+               tid_hash,
+               lv_names[level] );
 
     va_list args;
     va_start(args, format);
@@ -507,23 +537,23 @@ void SimpleLogger::put(int level,
     va_end(args);
 
     if (source_file && func_name) {
-        _snprintf(msg, avail_len, cur_len, msg_len,
-                  "\t[%s:%zu, %s()]\n",
-                  source_file + ((last_slash)?(last_slash+1):0),
-                  line_number, func_name );
+        _snprintf( msg, avail_len, cur_len, msg_len,
+                   "\t[%s:%zu, %s()]\n",
+                   source_file + ((last_slash)?(last_slash+1):0),
+                   line_number, func_name );
     } else {
         _snprintf(msg, avail_len, cur_len, msg_len, "\n");
     }
 
     size_t num = logs.size();
-    uint64_t cursor_exp, cursor_val;
+    uint64_t cursor_exp = 0, cursor_val = 0;
     LogElem* ll = nullptr;
     do {
         cursor_exp = cursor.load(MOR);
         cursor_val = (cursor_exp + 1) % num;
         ll = &logs[cursor_exp];
-    } while ( !cursor.compare_exchange_strong(cursor_exp, cursor_val, MOR) ||
-              !ll->available() );
+    } while ( !cursor.compare_exchange_strong(cursor_exp, cursor_val, MOR) );
+    while ( !ll->available() ) std::this_thread::yield();
 
     if (ll->needToFlush()) {
         // Allow only one thread to flush.
@@ -538,31 +568,31 @@ void SimpleLogger::put(int level,
 
     // Console part.
     static const char* colored_lv_names[7] =
-        {_CL_B_BROWN("===="), _CL_WHITE_FG_RED_BG("FATL"), _CL_B_RED("ERRO"),
-         _CL_B_MAGENTA("WARN"), "INFO",
-         _CL_D_GRAY("DEBG"), _CL_D_GRAY("TRAC")};
-
-    int us = (int)( std::chrono::duration_cast
-                        <std::chrono::microseconds>
-                            ( now.time_since_epoch() ).count() % 1000 );
+                       { _CL_B_BROWN("===="),
+                         _CL_WHITE_FG_RED_BG("FATL"),
+                         _CL_B_RED("ERRO"),
+                         _CL_B_MAGENTA("WARN"),
+                         "INFO",
+                         _CL_D_GRAY("DEBG"),
+                         _CL_D_GRAY("TRAC") };
 
     cur_len = 0;
     avail_len = MSG_SIZE;
-    _snprintf(msg, avail_len, cur_len, msg_len,
-              " [" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") "."
-              _CL_BROWN("%03d") " " _CL_BROWN("%03d")
-              "] [tid " _CL_B_BLUE("%04x") "] "
-              "[%s] ",
-              lt.hour, lt.min, lt.sec, ms, us,
-              tid_hash,
-              colored_lv_names[level] );
+    _snprintf( msg, avail_len, cur_len, msg_len,
+               " [" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") "."
+               _CL_BROWN("%03zu") " " _CL_BROWN("%03zu")
+               "] [tid " _CL_B_BLUE("%04x") "] "
+               "[%s] ",
+               lt.hour, lt.min, lt.sec, ms, us,
+               tid_hash,
+               colored_lv_names[level] );
 
     if (source_file && func_name) {
-        _snprintf(msg, avail_len, cur_len, msg_len,
-                  "[" _CL_GREEN("%s") ":" _CL_B_RED("%zu")
-                  ", " _CL_CYAN("%s()") "]\n",
-                  source_file + ((last_slash)?(last_slash+1):0),
-                  line_number, func_name );
+        _snprintf( msg, avail_len, cur_len, msg_len,
+                   "[" _CL_GREEN("%s") ":" _CL_B_RED("%zu")
+                   ", " _CL_CYAN("%s()") "]\n",
+                   source_file + ((last_slash)?(last_slash+1):0),
+                   line_number, func_name );
     } else {
         _snprintf(msg, avail_len, cur_len, msg_len, "\n");
     }
@@ -636,7 +666,8 @@ bool SimpleLogger::flush(size_t start_pos) {
     }
     fs.flush();
 
-    if (maxLogFileSize && fs.tellp() > maxLogFileSize) {
+    if ( maxLogFileSize &&
+         fs.tellp() > (int64_t)maxLogFileSize ) {
         // Exceeded limit, make a new file.
         curRevnum++;
         fs.close();
