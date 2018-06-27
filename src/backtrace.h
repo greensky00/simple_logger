@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Stack Backtrace
- * Version: 0.1.4
+ * Version: 0.1.5
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -30,6 +30,8 @@
  */
 
 #pragma once
+
+// LCOV_EXCL_START
 
 #define SIZE_T_UNUSED size_t __attribute__((unused))
 
@@ -120,3 +122,6 @@ stack_backtrace(char* output_buf, size_t output_buflen) {
 }
 
 #endif
+
+// LCOV_EXCL_STOP
+
