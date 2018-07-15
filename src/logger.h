@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.2.1
+ * Version: 0.2.2
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -55,8 +55,9 @@
 
 
 // printf style log macro
-#define _log_(level, l, args...) \
-    if (l) (l)->put(level, __FILE__, __func__, __LINE__, args)
+#define _log_(level, l, args...)        \
+    if (l && l->getLogLevel() >= level) \
+        (l)->put(level, __FILE__, __func__, __LINE__, args)
 
 #define _log_sys(l, args...)    _log_(SimpleLogger::SYS,     l, args)
 #define _log_fatal(l, args...)  _log_(SimpleLogger::FATAL,   l, args)
@@ -68,8 +69,9 @@
 
 
 // stream log macro
-#define _stream_(level, l) \
-    if (l) l->eos() = l->stream(level, l, __FILE__, __func__, __LINE__)
+#define _stream_(level, l)              \
+    if (l && l->getLogLevel() >= level) \
+        l->eos() = l->stream(level, l, __FILE__, __func__, __LINE__)
 
 #define _s_sys(l)   _stream_(SimpleLogger::SYS,     l)
 #define _s_fatal(l) _stream_(SimpleLogger::FATAL,   l)

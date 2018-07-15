@@ -263,6 +263,46 @@ int logger_reopen_with_reclaim_option_test(uint64_t num) {
     return 0;
 }
 
+int function_parameter(int logger_level, int target_level) {
+    // If logger's log level is smaller than target log's level,
+    // this function shouldn't be called.
+    if (target_level > logger_level) {
+        CHK_SMEQ(target_level, logger_level);
+    }
+    return target_level;
+}
+
+int logger_function_as_parameter_test() {
+    const std::string prefix = TEST_SUITE_AUTO_PREFIX;
+    TestSuite::clearTestFile(prefix);
+    std::string filename = TestSuite::getTestFileName(prefix) + ".log";
+
+    SimpleLogger* ll = nullptr;
+    TestSuite::Timer tt;
+
+    ll = new SimpleLogger(filename, 128, 1024*1024, 0);
+    ll->start();
+
+    for (int ii=1; ii<=6; ++ii) {
+        ll->setLogLevel(ii);
+        ll->setDispLevel(ii);
+        for (int jj=1; jj<=6; ++jj) {
+            _log_(jj, ll,
+                  "logger level %d, target level %d",
+                  ii, function_parameter(ii, jj));
+            _stream_(jj, ll)
+                << "logger level " << ii << ", "
+                << "target level " << function_parameter(ii, jj);
+        }
+    }
+
+    delete ll;
+
+    SimpleLogger::shutdown();
+    TestSuite::clearTestFile(prefix, TestSuite::END_OF_TEST);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     TestSuite ts(argc, argv);
 
@@ -288,6 +328,9 @@ int main(int argc, char** argv) {
     ts.doTest("reopen with reclaim option test",
               logger_reopen_with_reclaim_option_test,
               TestRange<uint64_t>({(uint64_t)1000000}));
+
+    ts.doTest("function as parameter test",
+              logger_function_as_parameter_test);
 
     return 0;
 }
