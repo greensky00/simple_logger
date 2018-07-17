@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.2.2
+ * Version: 0.2.3
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -274,13 +274,19 @@ public:
     static void destroy();
     static void handleSegFault(int sig);
     static void handleSegAbort(int sig);
+    static void handleStackTrace(int sig, siginfo_t* info, void* secret);
     static void flushWorker();
 
+    void logStackBackTraceOtherThreads();
     void logStackBacktrace();
+    void flushCriticalInfo();
+    void flushStackTraceBuffer(size_t len, bool crashOrigin = false);
     void flushAllLoggers() { flushAllLoggers(0, std::string()); }
     void flushAllLoggers(int level, const std::string& msg);
     void addLogger(SimpleLogger* logger);
     void removeLogger(SimpleLogger* logger);
+    void addThread(uint64_t tid);
+    void removeThread(uint64_t tid);
     void sleep(size_t ms);
     bool chkTermination() const;
     void setCriticalInfo(const std::string& info_str);
@@ -305,6 +311,9 @@ private:
     std::mutex loggersLock;
     std::unordered_set<SimpleLogger*> loggers;
 
+    std::mutex activeThreadsLock;
+    std::unordered_set<uint64_t> activeThreads;
+
     std::thread tFlush;
     std::condition_variable cvSleep;
     std::mutex cvSleepLock;
@@ -317,5 +326,8 @@ private:
 
     // Reserve some buffer for stack trace.
     char* stackTraceBuffer;
+
+    // TID of thread where crash happens.
+    std::atomic<uint64_t> crashOriginThread;
 };
 

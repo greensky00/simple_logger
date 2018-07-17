@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.2.2
+ * Version: 0.2.3
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -36,6 +36,9 @@
 #include <iostream>
 
 #include <dirent.h>
+#ifdef __linux__
+    #include <pthread.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -134,43 +137,120 @@ void SimpleLoggerMgr::destroy() {
     }
 }
 
-void SimpleLoggerMgr::logStackBacktrace() {
-    size_t len = stack_backtrace(stackTraceBuffer, stackTraceBufferSize);
-    if (len) {
-        std::string msg = "\n";
-        msg += globalCriticalInfo + "\n\n";
-        msg += std::string(stackTraceBuffer, len);
+void SimpleLoggerMgr::logStackBackTraceOtherThreads() {
+#ifndef __linux__
+    // Not support non-Linux platform.
+    return;
 
-        size_t msg_len = msg.size();
-        size_t per_log_size = SimpleLogger::MSG_SIZE - 1024;
-        for (size_t ii=0; ii<msg_len; ii+=per_log_size) {
-            flushAllLoggers(2, msg.substr(ii, per_log_size));
-        }
+#else
+    uint64_t my_tid = pthread_self();
+    uint64_t exp = 0;
+    if (!crashOriginThread.compare_exchange_strong(exp, my_tid)) {
+        // Other thread is already working on it, stop here.
+        return;
+    }
+
+    std::lock_guard<std::mutex> l(activeThreadsLock);
+    for (uint64_t _tid: activeThreads) {
+        pthread_t tid = (pthread_t)_tid;
+        if (_tid == crashOriginThread) continue;
+
+        struct sigaction _action;
+        sigfillset(&_action.sa_mask);
+        _action.sa_flags = SA_SIGINFO;
+        _action.sa_sigaction = SimpleLoggerMgr::handleStackTrace;
+        sigaction(SIGUSR2, &_action, NULL);
+
+        pthread_kill(tid, SIGUSR2);
+
+        sigset_t _mask;
+        sigfillset(&_mask);
+        sigdelset(&_mask, SIGUSR2);
+        sigsuspend(&_mask);
+    }
+#endif
+}
+
+void SimpleLoggerMgr::flushCriticalInfo() {
+    std::string msg = " === Critical info (given by user): ";
+    msg += std::to_string(globalCriticalInfo.size()) + " bytes";
+    msg += " ===";
+    if (!globalCriticalInfo.empty()) {
+        msg += "\n" + globalCriticalInfo;
+    }
+    flushAllLoggers(2, msg);
+}
+
+void SimpleLoggerMgr::flushStackTraceBuffer(size_t len, bool crashOrigin) {
+    if (!len) return;
+
+    thread_local std::thread::id tid = std::this_thread::get_id();
+    thread_local uint32_t tid_hash = std::hash<std::thread::id>{}(tid) % 0x10000;
+
+    std::string msg;
+    char temp_buf[256];
+    sprintf( temp_buf, "[tid %04x] %s\n\n",
+             tid_hash,
+             crashOrigin ? "(crashed here)" : "" );
+    msg += temp_buf;
+    msg += std::string(stackTraceBuffer, len);
+
+    size_t msg_len = msg.size();
+    size_t per_log_size = SimpleLogger::MSG_SIZE - 1024;
+    for (size_t ii=0; ii<msg_len; ii+=per_log_size) {
+        flushAllLoggers(2, msg.substr(ii, per_log_size));
     }
 }
 
+void SimpleLoggerMgr::logStackBacktrace() {
+    flushCriticalInfo();
+    size_t len = stack_backtrace(stackTraceBuffer, stackTraceBufferSize);
+    flushStackTraceBuffer(len, true);
+    logStackBackTraceOtherThreads();
+}
+
 void SimpleLoggerMgr::handleSegFault(int sig) {
-    printf("SEG FAULT!!\n");
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     signal(SIGSEGV, mgr->oldSigSegvHandler);
     mgr->flushAllLoggers(1, "Segmentation fault");
     mgr->logStackBacktrace();
 
-    printf("Flushed all logs safely.\n");
+    printf("[SEG FAULT] Flushed all logs safely.\n");
     fflush(stdout);
-    mgr->oldSigSegvHandler(sig);
+    if (mgr->oldSigSegvHandler) {
+        mgr->oldSigSegvHandler(sig);
+    }
 }
 
 void SimpleLoggerMgr::handleSegAbort(int sig) {
-    printf("ABORT!!\n");
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     signal(SIGABRT, mgr->oldSigAbortHandler);
     mgr->flushAllLoggers(1, "Abort");
     mgr->logStackBacktrace();
 
-    printf("Flushed all logs safely.\n");
+    printf("[ABORT] Flushed all logs safely.\n");
     fflush(stdout);
     abort();
+}
+
+void SimpleLoggerMgr::handleStackTrace(int sig, siginfo_t* info, void* secret) {
+#ifndef __linux__
+    // Not support non-Linux platform.
+    return;
+#else
+    SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
+    if (!mgr->crashOriginThread) return;
+
+    pthread_t myself = pthread_self();
+    if (mgr->crashOriginThread == myself) return;
+
+    size_t len = stack_backtrace( mgr->stackTraceBuffer,
+                                  mgr->stackTraceBufferSize );
+    mgr->flushStackTraceBuffer(len);
+
+    // Go back to origin thread.
+    pthread_kill(mgr->crashOriginThread, SIGUSR2);
+#endif
 }
 
 void SimpleLoggerMgr::flushWorker() {
@@ -188,6 +268,7 @@ SimpleLoggerMgr::SimpleLoggerMgr()
     , oldSigSegvHandler(nullptr)
     , oldSigAbortHandler(nullptr)
     , stackTraceBuffer(nullptr)
+    , crashOriginThread(0)
 {
     oldSigSegvHandler = signal(SIGSEGV, SimpleLoggerMgr::handleSegFault);
     oldSigAbortHandler = signal(SIGABRT, SimpleLoggerMgr::handleSegAbort);
@@ -234,6 +315,16 @@ void SimpleLoggerMgr::removeLogger(SimpleLogger* logger) {
     loggers.erase(logger);
 }
 
+void SimpleLoggerMgr::addThread(uint64_t tid) {
+    std::unique_lock<std::mutex> l(activeThreadsLock);
+    activeThreads.insert(tid);
+}
+
+void SimpleLoggerMgr::removeThread(uint64_t tid) {
+    std::unique_lock<std::mutex> l(activeThreadsLock);
+    activeThreads.erase(tid);
+}
+
 void SimpleLoggerMgr::sleep(size_t ms) {
     std::unique_lock<std::mutex> l(cvSleepLock);
     cvSleep.wait_for(l, std::chrono::milliseconds(ms));
@@ -250,6 +341,28 @@ void SimpleLoggerMgr::setCriticalInfo(const std::string& info_str) {
 const std::string& SimpleLoggerMgr::getCriticalInfo() const {
     return globalCriticalInfo;
 }
+
+
+// ==========================================
+
+struct ThreadWrapper {
+#ifdef __linux__
+    ThreadWrapper() {
+        myTid = (uint64_t)pthread_self();
+        SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
+        mgr->addThread(myTid);
+    }
+    ~ThreadWrapper() {
+        SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
+        mgr->removeThread(myTid);
+    }
+#else
+    ThreadWrapper() : myTid(0) {}
+    ~ThreadWrapper() {}
+#endif
+    uint64_t myTid;
+};
+
 
 
 // ==========================================
@@ -496,6 +609,7 @@ void SimpleLogger::put(int level,
     thread_local char msg[MSG_SIZE];
     thread_local std::thread::id tid = std::this_thread::get_id();
     thread_local uint32_t tid_hash = std::hash<std::thread::id>{}(tid) % 0x10000;
+    thread_local ThreadWrapper thread_wrapper;
 
     // Print filename part only (excluding directory path).
     size_t last_slash = 0;
