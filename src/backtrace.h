@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Stack Backtrace
- * Version: 0.1.5
+ * Version: 0.2.0
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -35,9 +35,6 @@
 
 #define SIZE_T_UNUSED size_t __attribute__((unused))
 
-// Only on Linux.
-#ifdef __linux__
-
 #include <cstddef>
 #include <string>
 
@@ -53,18 +50,28 @@
     cur_len += (avail_len > msg_len) ? msg_len : avail_len
 
 static SIZE_T_UNUSED
-stack_backtrace(char* output_buf, size_t output_buflen) {
-    void* stack_ptr[256];
-    int stack_size = 0;
-    stack_size = backtrace(stack_ptr, 256);
+_stack_backtrace(void** stack_ptr, size_t stack_ptr_capacity) {
+    return backtrace(stack_ptr, stack_ptr_capacity);
+}
 
+static SIZE_T_UNUSED
+_stack_interpret(void** stack_ptr,
+                 int stack_size,
+                 char* output_buf,
+                 size_t output_buflen)
+{
     char** stack_msg = nullptr;
     stack_msg = backtrace_symbols(stack_ptr, stack_size);
 
     size_t cur_len = 0;
 
     size_t frame_num = 0;
-    for (int i=0; i<stack_size; ++i) {
+    (void)frame_num;
+
+    // NOTE: starting from 1, skipping this frame.
+    for (int i=1; i<stack_size; ++i) {
+
+#ifdef __linux__
         int fname_len = 0;
         while ( stack_msg[i][fname_len] != '(' &&
                 stack_msg[i][fname_len] != ' ' &&
@@ -109,19 +116,27 @@ stack_backtrace(char* output_buf, size_t output_buflen) {
         }
 
         _snprintf(output_buf, avail_len, cur_len, msg_len, "%s\n", file_line);
+
+#else
+        // On non-Linux platform, just use the raw symbols.
+        size_t msg_len = 0;
+        size_t avail_len = output_buflen;
+        _snprintf(output_buf, avail_len, cur_len, msg_len, "%s\n", stack_msg[i]);
+
+#endif
     }
+    free(stack_msg);
 
     return cur_len;
 }
 
-#else
-
 static SIZE_T_UNUSED
 stack_backtrace(char* output_buf, size_t output_buflen) {
-    return 0;
+    void* stack_ptr[256];
+    int stack_size = _stack_backtrace(stack_ptr, 256);
+    return _stack_interpret(stack_ptr, stack_size, output_buf, output_buflen);
 }
 
-#endif
 
 // LCOV_EXCL_STOP
 

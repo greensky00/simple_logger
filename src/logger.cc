@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.2.3
+ * Version: 0.3.1
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -41,6 +41,8 @@
 #endif
 #include <stdlib.h>
 #include <string.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #ifndef _CLM_DEFINED
@@ -137,12 +139,77 @@ void SimpleLoggerMgr::destroy() {
     }
 }
 
-void SimpleLoggerMgr::logStackBackTraceOtherThreads() {
-#ifndef __linux__
-    // Not support non-Linux platform.
-    return;
+int SimpleLoggerMgr::getTzGap() {
+    std::chrono::system_clock::time_point now =
+        std::chrono::system_clock::now();
+    std::time_t raw_time = std::chrono::system_clock::to_time_t(now);
+    std::tm* lt_tm = std::localtime(&raw_time);
+    TimeInfo lt(lt_tm);
+    std::tm* gmt_tm = std::gmtime(&raw_time);
+    TimeInfo gmt(gmt_tm);
 
-#else
+    return ( (  lt.day * 60 * 24 +  lt.hour * 60 +  lt.min ) -
+             ( gmt.day * 60 * 24 + gmt.hour * 60 + gmt.min ) );
+}
+
+void SimpleLoggerMgr::flushCriticalInfo() {
+    std::string msg = " === Critical info (given by user): ";
+    msg += std::to_string(globalCriticalInfo.size()) + " bytes";
+    msg += " ===";
+    if (!globalCriticalInfo.empty()) {
+        msg += "\n" + globalCriticalInfo;
+    }
+    flushAllLoggers(2, msg);
+    if (crashDumpFile.is_open()) {
+        crashDumpFile << msg << std::endl << std::endl;
+    }
+}
+
+void SimpleLoggerMgr::_flushStackTraceBuffer(size_t buffer_len,
+                                             uint32_t tid_hash,
+                                             uint64_t kernel_tid,
+                                             bool crash_origin)
+{
+    std::string msg;
+    char temp_buf[256];
+    sprintf(temp_buf, "\nThread %04x", tid_hash);
+    msg += temp_buf;
+    if (kernel_tid) {
+        msg += " (" + std::to_string(kernel_tid) + ")";
+    }
+    if (crash_origin) {
+        msg += " (crashed here)";
+    }
+    msg += "\n\n";
+    msg += std::string(stackTraceBuffer, buffer_len);
+
+    size_t msg_len = msg.size();
+    size_t per_log_size = SimpleLogger::MSG_SIZE - 1024;
+    for (size_t ii=0; ii<msg_len; ii+=per_log_size) {
+        flushAllLoggers(2, msg.substr(ii, per_log_size));
+    }
+
+    if (crashDumpFile.is_open()) {
+        crashDumpFile << msg << std::endl;
+    }
+}
+
+void SimpleLoggerMgr::flushStackTraceBuffer(RawStackInfo& stack_info) {
+    size_t len = _stack_interpret(&stack_info.stackPtrs[0],
+                                  stack_info.stackPtrs.size(),
+                                  stackTraceBuffer,
+                                  stackTraceBufferSize);
+    if (!len) return;
+
+    _flushStackTraceBuffer(len,
+                           stack_info.tidHash,
+                           stack_info.kernelTid,
+                           stack_info.crashOrigin);
+}
+
+void SimpleLoggerMgr::logStackBackTraceOtherThreads() {
+#ifdef __linux__
+    // Not support non-Linux platform.
     uint64_t my_tid = pthread_self();
     uint64_t exp = 0;
     if (!crashOriginThread.compare_exchange_strong(exp, my_tid)) {
@@ -151,6 +218,11 @@ void SimpleLoggerMgr::logStackBackTraceOtherThreads() {
     }
 
     std::lock_guard<std::mutex> l(activeThreadsLock);
+    std::string msg = "captured ";
+    msg += std::to_string(activeThreads.size()) + " active threads";
+    flushAllLoggers(2, msg);
+    if (crashDumpFile.is_open()) crashDumpFile << msg << "\n\n";
+
     for (uint64_t _tid: activeThreads) {
         pthread_t tid = (pthread_t)_tid;
         if (_tid == crashOriginThread) continue;
@@ -168,50 +240,68 @@ void SimpleLoggerMgr::logStackBackTraceOtherThreads() {
         sigdelset(&_mask, SIGUSR2);
         sigsuspend(&_mask);
     }
-#endif
-}
 
-void SimpleLoggerMgr::flushCriticalInfo() {
-    std::string msg = " === Critical info (given by user): ";
-    msg += std::to_string(globalCriticalInfo.size()) + " bytes";
-    msg += " ===";
-    if (!globalCriticalInfo.empty()) {
-        msg += "\n" + globalCriticalInfo;
-    }
+    msg = "got all stack traces, now flushing them";
     flushAllLoggers(2, msg);
+#endif
+
+    // Got all stack trace pointers, get symbol and print it.
+    for (RawStackInfo& entry: crashDumpThreadStacks) {
+        flushStackTraceBuffer(entry);
+    }
 }
 
-void SimpleLoggerMgr::flushStackTraceBuffer(size_t len, bool crashOrigin) {
-    if (!len) return;
+void SimpleLoggerMgr::addRawStackInfo(bool crash_origin) {
+    void* stack_ptr[256];
+    size_t len = _stack_backtrace(stack_ptr, 256);
 
-    thread_local std::thread::id tid = std::this_thread::get_id();
-    thread_local uint32_t tid_hash = std::hash<std::thread::id>{}(tid) % 0x10000;
-
-    std::string msg;
-    char temp_buf[256];
-    sprintf( temp_buf, "[tid %04x] %s\n\n",
-             tid_hash,
-             crashOrigin ? "(crashed here)" : "" );
-    msg += temp_buf;
-    msg += std::string(stackTraceBuffer, len);
-
-    size_t msg_len = msg.size();
-    size_t per_log_size = SimpleLogger::MSG_SIZE - 1024;
-    for (size_t ii=0; ii<msg_len; ii+=per_log_size) {
-        flushAllLoggers(2, msg.substr(ii, per_log_size));
+    crashDumpThreadStacks.push_back(RawStackInfo());
+    RawStackInfo& stack_info = *(crashDumpThreadStacks.rbegin());
+    std::thread::id tid = std::this_thread::get_id();
+    stack_info.tidHash = std::hash<std::thread::id>{}(tid) % 0x10000;
+#ifdef __linux__
+    stack_info.kernelTid = (uint64_t)syscall(SYS_gettid);
+#endif
+    stack_info.crashOrigin = crash_origin;
+    for (size_t ii=0; ii<len; ++ii) {
+        stack_info.stackPtrs.push_back(stack_ptr[ii]);
     }
 }
 
 void SimpleLoggerMgr::logStackBacktrace() {
+    if (!crashDumpPath.empty() && !crashDumpFile.is_open()) {
+        // Open crash dump file.
+        TimeInfo lt( std::chrono::system_clock::now() );
+        int tz_gap = getTzGap();
+        int tz_gap_abs = (tz_gap < 0) ? (tz_gap * -1) : (tz_gap);
+
+        char filename[128];
+        sprintf(filename, "dump_%04d%02d%02d_%02d%02d%02d%c%02d%02d.txt",
+                lt.year, lt.month, lt.day,
+                lt.hour, lt.min, lt.sec,
+                (tz_gap >= 0) ? '+' : '-',
+                (int)(tz_gap_abs / 60), tz_gap_abs % 60);
+        std::string path = crashDumpPath + "/" + filename;
+        crashDumpFile.open(path);
+
+        char time_fmt[64];
+        sprintf(time_fmt, "%04d-%02d-%02dT%02d:%02d:%02d.%03d%03d%c%02d:%02d",
+                lt.year, lt.month, lt.day,
+                lt.hour, lt.min, lt.sec, lt.msec, lt.usec,
+                (tz_gap >= 0) ? '+' : '-',
+                (int)(tz_gap_abs / 60), tz_gap_abs % 60);
+        crashDumpFile << "When: " << time_fmt << std::endl << std::endl;
+    }
+
     flushCriticalInfo();
-    size_t len = stack_backtrace(stackTraceBuffer, stackTraceBufferSize);
-    flushStackTraceBuffer(len, true);
+    addRawStackInfo(true);
     logStackBackTraceOtherThreads();
 }
 
 void SimpleLoggerMgr::handleSegFault(int sig) {
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     signal(SIGSEGV, mgr->oldSigSegvHandler);
+    mgr->enableOnlyOneDisplayer();
     mgr->flushAllLoggers(1, "Segmentation fault");
     mgr->logStackBacktrace();
 
@@ -225,6 +315,7 @@ void SimpleLoggerMgr::handleSegFault(int sig) {
 void SimpleLoggerMgr::handleSegAbort(int sig) {
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     signal(SIGABRT, mgr->oldSigAbortHandler);
+    mgr->enableOnlyOneDisplayer();
     mgr->flushAllLoggers(1, "Abort");
     mgr->logStackBacktrace();
 
@@ -244,9 +335,10 @@ void SimpleLoggerMgr::handleStackTrace(int sig, siginfo_t* info, void* secret) {
     pthread_t myself = pthread_self();
     if (mgr->crashOriginThread == myself) return;
 
-    size_t len = stack_backtrace( mgr->stackTraceBuffer,
-                                  mgr->stackTraceBufferSize );
-    mgr->flushStackTraceBuffer(len);
+    // NOTE:
+    //   As getting exact line number is too expensive,
+    //   keep stack pointers first and then interpret it.
+    mgr->addRawStackInfo();
 
     // Go back to origin thread.
     pthread_kill(mgr->crashOriginThread, SIGUSR2);
@@ -260,6 +352,10 @@ void SimpleLoggerMgr::flushWorker() {
         mgr->sleep(500);
         mgr->flushAllLoggers();
     }
+}
+
+void SimpleLoggerMgr::setCrashDumpPath(const std::string& path) {
+    crashDumpPath = path;
 }
 
 
@@ -291,6 +387,26 @@ SimpleLoggerMgr::~SimpleLoggerMgr() {
     }
 
     free(stackTraceBuffer);
+}
+
+void SimpleLoggerMgr::enableOnlyOneDisplayer() {
+    bool marked = false;
+    std::unique_lock<std::mutex> l(loggersLock);
+    for (auto& entry: loggers) {
+        SimpleLogger* logger = entry;
+        if (!logger) continue;
+        if (!marked) {
+            // The first logger: enable display
+            if (logger->getLogLevel() < 4) {
+                logger->setLogLevel(4);
+            }
+            logger->setDispLevel(4);
+            marked = true;
+        } else {
+            // The others: disable display
+            logger->setDispLevel(-1);
+        }
+    }
 }
 
 void SimpleLoggerMgr::flushAllLoggers(int level, const std::string& msg) {
@@ -417,18 +533,31 @@ SimpleLogger::SimpleLogger(const std::string& file_path,
     , numCompThreads(0)
     , curLogLevel(4)
     , curDispLevel(4)
-    , tzGap(0)
+    , tzGap( SimpleLoggerMgr::getTzGap() )
     , cursor(0)
     , logs(max_log_elems)
     , flushingLogs(false)
 {
     findMinMaxRevNum(minRevnum, curRevnum);
-    calcTzGap();
 }
 
 SimpleLogger::~SimpleLogger() {
     stop();
     while (numCompThreads) std::this_thread::yield();
+}
+
+void SimpleLogger::setCriticalInfo(const std::string& info_str) {
+    SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
+    if (mgr) {
+        mgr->setCriticalInfo(info_str);
+    }
+}
+
+void SimpleLogger::setCrashDumpPath(const std::string& path) {
+    SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
+    if (mgr) {
+        mgr->setCrashDumpPath(path);
+    }
 }
 
 void SimpleLogger::shutdown() {
@@ -455,19 +584,6 @@ std::string SimpleLogger::replaceString( const std::string& src_str,
         ret += src_str.substr(last);
     }
     return ret;
-}
-
-void SimpleLogger::calcTzGap() {
-    std::chrono::system_clock::time_point now =
-        std::chrono::system_clock::now();
-    std::time_t raw_time = std::chrono::system_clock::to_time_t(now);
-    std::tm* lt_tm = std::localtime(&raw_time);
-    TimeInfo lt(lt_tm);
-    std::tm* gmt_tm = std::gmtime(&raw_time);
-    TimeInfo gmt(gmt_tm);
-
-    tzGap = (  lt.day * 60 * 24 +  lt.hour * 60 +  lt.min ) -
-            ( gmt.day * 60 * 24 + gmt.hour * 60 + gmt.min );
 }
 
 void SimpleLogger::findMinMaxRevNum( size_t& min_revnum_out,
@@ -617,16 +733,7 @@ void SimpleLogger::put(int level,
         if (source_file[ii] == '/' || source_file[ii] == '\\') last_slash = ii;
     }
 
-    std::chrono::system_clock::time_point now =
-        std::chrono::system_clock::now();
-    std::time_t raw_time = std::chrono::system_clock::to_time_t(now);
-    std::tm* lt_tm = std::localtime(&raw_time);
-    TimeInfo lt(lt_tm);
-
-    size_t us_epoch = std::chrono::duration_cast< std::chrono::microseconds >
-                      ( now.time_since_epoch() ).count();
-    size_t ms = (us_epoch / 1000) % 1000;
-    size_t us = us_epoch % 1000;
+    SimpleLoggerMgr::TimeInfo lt( std::chrono::system_clock::now() );
     int tz_gap_abs = (tzGap < 0) ? (tzGap * -1) : (tzGap);
 
     // [time] [tid] [log type] [user msg] [stack info]
@@ -636,11 +743,11 @@ void SimpleLogger::put(int level,
     size_t msg_len = 0;
 
     _snprintf( msg, avail_len, cur_len, msg_len,
-               "%04d-%02d-%02dT%02d:%02d:%02d.%03zu_%03zu%c%02d:%02d "
+               "%04d-%02d-%02dT%02d:%02d:%02d.%03d_%03d%c%02d:%02d "
                "[%04x] "
                "[%s] ",
                lt.year, lt.month, lt.day,
-               lt.hour, lt.min, lt.sec, ms, us,
+               lt.hour, lt.min, lt.sec, lt.msec, lt.usec,
                (tzGap >= 0)?'+':'-', tz_gap_abs / 60, tz_gap_abs % 60,
                tid_hash,
                lv_names[level] );
@@ -694,10 +801,10 @@ void SimpleLogger::put(int level,
     avail_len = MSG_SIZE;
     _snprintf( msg, avail_len, cur_len, msg_len,
                " [" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") "."
-               _CL_BROWN("%03zu") " " _CL_BROWN("%03zu")
+               _CL_BROWN("%03d") " " _CL_BROWN("%03d")
                "] [tid " _CL_B_BLUE("%04x") "] "
                "[%s] ",
-               lt.hour, lt.min, lt.sec, ms, us,
+               lt.hour, lt.min, lt.sec, lt.msec, lt.usec,
                tid_hash,
                colored_lv_names[level] );
 

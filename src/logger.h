@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.2.3
+ * Version: 0.3.1
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -82,7 +82,9 @@
 #define _s_trace(l) _stream_(SimpleLogger::TRACE,   l)
 
 
+class SimpleLoggerMgr;
 class SimpleLogger {
+    friend class SimpleLoggerMgr;
 public:
     static const int MSG_SIZE = 4096;
 
@@ -98,8 +100,8 @@ public:
 
     class LoggerStream : public std::ostream {
     public:
-        LoggerStream() : level(0), logger(nullptr), file(nullptr)
-                       , func(nullptr), line(0) {}
+        LoggerStream() : std::ostream(&buf), level(0), logger(nullptr)
+                       , file(nullptr), func(nullptr), line(0) {}
 
         template<typename T>
         inline LoggerStream& operator<<(const T& data) {
@@ -129,6 +131,7 @@ public:
         }
 
     private:
+        std::stringbuf buf;
         std::stringstream sStream;
         int level;
         SimpleLogger* logger;
@@ -137,7 +140,7 @@ public:
         size_t line;
     };
 
-    class EndOfStmt : public LoggerStream {
+    class EndOfStmt {
     public:
         EndOfStmt() {}
         EndOfStmt(LoggerStream& src) { src.put(); }
@@ -184,28 +187,15 @@ private:
         std::atomic<Status> status;
     };
 
-    struct TimeInfo {
-        TimeInfo(std::tm* src)
-            : year(src->tm_year + 1900)
-            , month(src->tm_mon + 1)
-            , day(src->tm_mday)
-            , hour(src->tm_hour)
-            , min(src->tm_min)
-            , sec(src->tm_sec) {}
-        int year;
-        int month;
-        int day;
-        int hour;
-        int min;
-        int sec;
-    };
-
 public:
     SimpleLogger(const std::string& file_path,
                  size_t max_log_elems           = 4096,
                  uint64_t log_file_size_limit   = 32*1024*1024,
                  uint32_t max_log_files         = 16);
     ~SimpleLogger();
+
+    static void setCriticalInfo(const std::string& info_str);
+    static void setCrashDumpPath(const std::string& path);
 
     static void shutdown();
     static std::string replaceString(const std::string& src_str,
@@ -268,19 +258,70 @@ private:
 // Singleton class
 class SimpleLoggerMgr {
 public:
+    struct TimeInfo {
+        TimeInfo(std::tm* src)
+            : year(src->tm_year + 1900)
+            , month(src->tm_mon + 1)
+            , day(src->tm_mday)
+            , hour(src->tm_hour)
+            , min(src->tm_min)
+            , sec(src->tm_sec)
+            , msec(0)
+            , usec(0) {}
+        TimeInfo(std::chrono::system_clock::time_point now) {
+            std::time_t raw_time = std::chrono::system_clock::to_time_t(now);
+            std::tm* lt_tm = std::localtime(&raw_time);
+            year = lt_tm->tm_year + 1900;
+            month = lt_tm->tm_mon + 1;
+            day = lt_tm->tm_mday;
+            hour = lt_tm->tm_hour;
+            min = lt_tm->tm_min;
+            sec = lt_tm->tm_sec;
+
+            size_t us_epoch = std::chrono::duration_cast
+                              < std::chrono::microseconds >
+                              ( now.time_since_epoch() ).count();
+            msec = (us_epoch / 1000) % 1000;
+            usec = us_epoch % 1000;
+        }
+        int year;
+        int month;
+        int day;
+        int hour;
+        int min;
+        int sec;
+        int msec;
+        int usec;
+    };
+
+    struct RawStackInfo {
+        RawStackInfo() : tidHash(0), kernelTid(0), crashOrigin(false) {}
+        uint32_t tidHash;
+        uint64_t kernelTid;
+        std::vector<void*> stackPtrs;
+        bool crashOrigin;
+    };
+
     static SimpleLoggerMgr* init();
     static SimpleLoggerMgr* get();
     static SimpleLoggerMgr* getWithoutInit();
     static void destroy();
+    static int getTzGap();
     static void handleSegFault(int sig);
     static void handleSegAbort(int sig);
     static void handleStackTrace(int sig, siginfo_t* info, void* secret);
     static void flushWorker();
 
+    void addRawStackInfo(bool crash_origin = false);
     void logStackBackTraceOtherThreads();
     void logStackBacktrace();
     void flushCriticalInfo();
-    void flushStackTraceBuffer(size_t len, bool crashOrigin = false);
+    void _flushStackTraceBuffer(size_t buffer_len,
+                                uint32_t tid_hash,
+                                uint64_t kernel_tid,
+                                bool crash_origin);
+    void flushStackTraceBuffer(RawStackInfo& stack_info);
+    void enableOnlyOneDisplayer();
     void flushAllLoggers() { flushAllLoggers(0, std::string()); }
     void flushAllLoggers(int level, const std::string& msg);
     void addLogger(SimpleLogger* logger);
@@ -290,6 +331,7 @@ public:
     void sleep(size_t ms);
     bool chkTermination() const;
     void setCriticalInfo(const std::string& info_str);
+    void setCrashDumpPath(const std::string& path);
     const std::string& getCriticalInfo() const;
 
     static std::mutex displayLock;
@@ -329,5 +371,11 @@ private:
 
     // TID of thread where crash happens.
     std::atomic<uint64_t> crashOriginThread;
+
+    std::string crashDumpPath;
+    std::ofstream crashDumpFile;
+
+    // Assume that only one thread is updating this.
+    std::vector<RawStackInfo> crashDumpThreadStacks;
 };
 
