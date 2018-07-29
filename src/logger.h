@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.1
+ * Version: 0.3.2
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -374,6 +374,8 @@ private:
 
     std::string crashDumpPath;
     std::ofstream crashDumpFile;
+
+    std::atomic<uint64_t> abortTimer;
 
     // Assume that only one thread is updating this.
     std::vector<RawStackInfo> crashDumpThreadStacks;

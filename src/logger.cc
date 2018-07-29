@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.1
+ * Version: 0.3.2
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -33,6 +33,7 @@
 
 #include "backtrace.h"
 
+#include <iomanip>
 #include <iostream>
 
 #include <dirent.h>
@@ -246,6 +247,23 @@ void SimpleLoggerMgr::logStackBackTraceOtherThreads() {
 #endif
 
     // Got all stack trace pointers, get symbol and print it.
+
+    // For the case where `addr2line` is hanging, flush raw poitner first.
+    if (crashDumpFile.is_open()) {
+        for (RawStackInfo& entry: crashDumpThreadStacks) {
+            crashDumpFile << "Thread " << std::hex << std::setw(4) << std::setfill('0')
+                          << entry.tidHash << std::dec
+                          << " " << entry.kernelTid << std::endl;
+            if (entry.crashOrigin) {
+                crashDumpFile << "(crashed here)" << std::endl;
+            }
+            for (void* stack_ptr: entry.stackPtrs) {
+                crashDumpFile << std::hex << stack_ptr << std::dec << std::endl;
+            }
+            crashDumpFile << std::endl;
+        }
+    }
+
     for (RawStackInfo& entry: crashDumpThreadStacks) {
         flushStackTraceBuffer(entry);
     }
@@ -269,6 +287,9 @@ void SimpleLoggerMgr::addRawStackInfo(bool crash_origin) {
 }
 
 void SimpleLoggerMgr::logStackBacktrace() {
+    // Set abort timeout: 60 seconds.
+    abortTimer = 60 * 1000;
+
     if (!crashDumpPath.empty() && !crashDumpFile.is_open()) {
         // Open crash dump file.
         TimeInfo lt( std::chrono::system_clock::now() );
@@ -349,8 +370,17 @@ void SimpleLoggerMgr::flushWorker() {
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     while (!mgr->chkTermination()) {
         // Every 500ms.
-        mgr->sleep(500);
+        size_t sub_ms = 500;
+        mgr->sleep(sub_ms);
         mgr->flushAllLoggers();
+        if (mgr->abortTimer) {
+            if (mgr->abortTimer > sub_ms) {
+                mgr->abortTimer.fetch_sub(sub_ms);
+            } else {
+                std::cerr << "STACK DUMP TIMEOUT, FORCE ABORT" << std::endl;
+                abort();
+            }
+        }
     }
 }
 
@@ -365,6 +395,7 @@ SimpleLoggerMgr::SimpleLoggerMgr()
     , oldSigAbortHandler(nullptr)
     , stackTraceBuffer(nullptr)
     , crashOriginThread(0)
+    , abortTimer(0)
 {
     oldSigSegvHandler = signal(SIGSEGV, SimpleLoggerMgr::handleSegFault);
     oldSigAbortHandler = signal(SIGABRT, SimpleLoggerMgr::handleSegAbort);
