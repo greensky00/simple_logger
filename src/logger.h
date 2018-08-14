@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.2
+ * Version: 0.3.5
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -44,6 +44,10 @@
 #include <signal.h>
 #include <stdarg.h>
 #include <sys/time.h>
+
+// To suppress false alarms by thread sanitizer,
+// add -DSUPPRESS_TSAN_FALSE_ALARMS=1 flag to CXXFLAGS.
+//#define SUPPRESS_TSAN_FALSE_ALARMS (1)
 
 // 0: System  [====]
 // 1: Fatal   [FATL]
@@ -182,6 +186,10 @@ private:
         int write(size_t _len, char* msg);
         int flush(std::ofstream& fs);
 
+#ifdef SUPPRESS_TSAN_FALSE_ALARMS
+        // To avoid false alarm by TSan.
+        std::mutex ctxLock;
+#endif
         size_t len;
         char ctx[MSG_SIZE];
         std::atomic<Status> status;
@@ -241,12 +249,19 @@ private:
 
     // Log up to `curLogLevel`, default: 6.
     // Disable: -1.
+#ifdef SUPPRESS_TSAN_FALSE_ALARMS
+    std::atomic<int> curLogLevel;
+#else
     int curLogLevel;
-
+#endif
     // Display (print out on terminal) up to `curDispLevel`,
     // default: 4 (do not print debug and trace).
     // Disable: -1.
+#ifdef SUPPRESS_TSAN_FALSE_ALARMS
+    std::atomic<int> curDispLevel;
+#else
     int curDispLevel;
+#endif
     std::mutex displayLock;
 
     int tzGap;
@@ -359,7 +374,7 @@ private:
     std::thread tFlush;
     std::condition_variable cvSleep;
     std::mutex cvSleepLock;
-    bool termination;
+    std::atomic<bool> termination;
     void (*oldSigSegvHandler)(int);
     void (*oldSigAbortHandler)(int);
 

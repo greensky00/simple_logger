@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.2
+ * Version: 0.3.5
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -152,6 +152,8 @@ int SimpleLoggerMgr::getTzGap() {
     return ( (  lt.day * 60 * 24 +  lt.hour * 60 +  lt.min ) -
              ( gmt.day * 60 * 24 + gmt.hour * 60 + gmt.min ) );
 }
+
+// LCOV_EXCL_START
 
 void SimpleLoggerMgr::flushCriticalInfo() {
     std::string msg = " === Critical info (given by user): ";
@@ -366,6 +368,8 @@ void SimpleLoggerMgr::handleStackTrace(int sig, siginfo_t* info, void* secret) {
 #endif
 }
 
+// LCOV_EXCL_STOP
+
 void SimpleLoggerMgr::flushWorker() {
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     while (!mgr->chkTermination()) {
@@ -420,6 +424,7 @@ SimpleLoggerMgr::~SimpleLoggerMgr() {
     free(stackTraceBuffer);
 }
 
+// LCOV_EXCL_START
 void SimpleLoggerMgr::enableOnlyOneDisplayer() {
     bool marked = false;
     std::unique_lock<std::mutex> l(loggersLock);
@@ -439,6 +444,7 @@ void SimpleLoggerMgr::enableOnlyOneDisplayer() {
         }
     }
 }
+// LCOV_EXCL_STOP
 
 void SimpleLoggerMgr::flushAllLoggers(int level, const std::string& msg) {
     std::unique_lock<std::mutex> l(loggersLock);
@@ -496,12 +502,16 @@ struct ThreadWrapper {
 #ifdef __linux__
     ThreadWrapper() {
         myTid = (uint64_t)pthread_self();
-        SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
-        mgr->addThread(myTid);
+        SimpleLoggerMgr* mgr = SimpleLoggerMgr::getWithoutInit();
+        if (mgr) {
+            mgr->addThread(myTid);
+        }
     }
     ~ThreadWrapper() {
-        SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
-        mgr->removeThread(myTid);
+        SimpleLoggerMgr* mgr = SimpleLoggerMgr::getWithoutInit();
+        if (mgr) {
+            mgr->removeThread(myTid);
+        }
     }
 #else
     ThreadWrapper() : myTid(0) {}
@@ -515,6 +525,9 @@ struct ThreadWrapper {
 // ==========================================
 
 SimpleLogger::LogElem::LogElem() : len(0), status(CLEAN) {
+#ifdef SUPPRESS_TSAN_FALSE_ALARMS
+    std::lock_guard<std::mutex> l(ctxLock);
+#endif
     memset(ctx, 0x0, MSG_SIZE);
 }
 
@@ -534,8 +547,14 @@ int SimpleLogger::LogElem::write(size_t _len, char* msg) {
     Status val = WRITING;
     if (!status.compare_exchange_strong(exp, val, MOR)) return -1;
 
-    len = (_len > MSG_SIZE) ? MSG_SIZE : _len;
-    memcpy(ctx, msg, len);
+    {
+#ifdef SUPPRESS_TSAN_FALSE_ALARMS
+        std::lock_guard<std::mutex> l(ctxLock);
+#endif
+        len = (_len > MSG_SIZE) ? MSG_SIZE : _len;
+        memcpy(ctx, msg, len);
+    }
+
     status.store(LogElem::DIRTY, MOR);
     return 0;
 }
@@ -545,7 +564,13 @@ int SimpleLogger::LogElem::flush(std::ofstream& fs) {
     Status val = FLUSHING;
     if (!status.compare_exchange_strong(exp, val, MOR)) return -1;
 
-    fs.write(ctx, len);
+    {
+#ifdef SUPPRESS_TSAN_FALSE_ALARMS
+        std::lock_guard<std::mutex> l(ctxLock);
+#endif
+        fs.write(ctx, len);
+    }
+
     status.store(LogElem::CLEAN, MOR);
     return 0;
 }
