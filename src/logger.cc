@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.5
+ * Version: 0.3.6
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -382,7 +382,7 @@ void SimpleLoggerMgr::flushWorker() {
                 mgr->abortTimer.fetch_sub(sub_ms);
             } else {
                 std::cerr << "STACK DUMP TIMEOUT, FORCE ABORT" << std::endl;
-                abort();
+                exit(-1);
             }
         }
     }
