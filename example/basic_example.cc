@@ -32,6 +32,7 @@ int main() {
     _log_info(ll, "info");
     _log_debug(ll, "debug");
     _log_trace(ll, "trace");
+    _log_trace(ll, "parameters %d %d %s", 1, 2, "3");
 
     ll->stop();
     ll->start();
@@ -43,6 +44,7 @@ int main() {
     _s_info(ll) << "info";
     _s_debug(ll) << "debug";
     _s_trace(ll) << "trace";
+    _s_trace(ll) << "multi" << std::endl << "lines " << 123;
 
     delete ll;
     SimpleLogger::shutdown();

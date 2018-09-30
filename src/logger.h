@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.6
+ * Version: 0.3.7
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -110,6 +110,13 @@ public:
         template<typename T>
         inline LoggerStream& operator<<(const T& data) {
             sStream << data;
+            return *this;
+        }
+
+        using MyCout = std::basic_ostream< char, std::char_traits<char> >;
+        typedef MyCout& (*EndlFunc)(MyCout&);
+        inline LoggerStream& operator<<(EndlFunc func) {
+            func(sStream);
             return *this;
         }
 
