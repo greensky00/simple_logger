@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.7
+ * Version: 0.3.10
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -211,64 +211,70 @@ void SimpleLoggerMgr::flushStackTraceBuffer(RawStackInfo& stack_info) {
 }
 
 void SimpleLoggerMgr::logStackBackTraceOtherThreads() {
+    bool got_other_stacks = false;
 #ifdef __linux__
-    // Not support non-Linux platform.
-    uint64_t my_tid = pthread_self();
-    uint64_t exp = 0;
-    if (!crashOriginThread.compare_exchange_strong(exp, my_tid)) {
-        // Other thread is already working on it, stop here.
-        return;
+    if (!crashDumpOriginOnly) {
+        // Not support non-Linux platform.
+        uint64_t my_tid = pthread_self();
+        uint64_t exp = 0;
+        if (!crashOriginThread.compare_exchange_strong(exp, my_tid)) {
+            // Other thread is already working on it, stop here.
+            return;
+        }
+
+        std::lock_guard<std::mutex> l(activeThreadsLock);
+        std::string msg = "captured ";
+        msg += std::to_string(activeThreads.size()) + " active threads";
+        flushAllLoggers(2, msg);
+        if (crashDumpFile.is_open()) crashDumpFile << msg << "\n\n";
+
+        for (uint64_t _tid: activeThreads) {
+            pthread_t tid = (pthread_t)_tid;
+            if (_tid == crashOriginThread) continue;
+
+            struct sigaction _action;
+            sigfillset(&_action.sa_mask);
+            _action.sa_flags = SA_SIGINFO;
+            _action.sa_sigaction = SimpleLoggerMgr::handleStackTrace;
+            sigaction(SIGUSR2, &_action, NULL);
+
+            pthread_kill(tid, SIGUSR2);
+
+            sigset_t _mask;
+            sigfillset(&_mask);
+            sigdelset(&_mask, SIGUSR2);
+            sigsuspend(&_mask);
+        }
+
+        msg = "got all stack traces, now flushing them";
+        flushAllLoggers(2, msg);
+
+        got_other_stacks = true;
     }
-
-    std::lock_guard<std::mutex> l(activeThreadsLock);
-    std::string msg = "captured ";
-    msg += std::to_string(activeThreads.size()) + " active threads";
-    flushAllLoggers(2, msg);
-    if (crashDumpFile.is_open()) crashDumpFile << msg << "\n\n";
-
-    for (uint64_t _tid: activeThreads) {
-        pthread_t tid = (pthread_t)_tid;
-        if (_tid == crashOriginThread) continue;
-
-        struct sigaction _action;
-        sigfillset(&_action.sa_mask);
-        _action.sa_flags = SA_SIGINFO;
-        _action.sa_sigaction = SimpleLoggerMgr::handleStackTrace;
-        sigaction(SIGUSR2, &_action, NULL);
-
-        pthread_kill(tid, SIGUSR2);
-
-        sigset_t _mask;
-        sigfillset(&_mask);
-        sigdelset(&_mask, SIGUSR2);
-        sigsuspend(&_mask);
-    }
-
-    msg = "got all stack traces, now flushing them";
-    flushAllLoggers(2, msg);
 #endif
 
-    // Got all stack trace pointers, get symbol and print it.
-
-    // For the case where `addr2line` is hanging, flush raw poitner first.
-    if (crashDumpFile.is_open()) {
-        for (RawStackInfo& entry: crashDumpThreadStacks) {
-            crashDumpFile << "Thread " << std::hex << std::setw(4) << std::setfill('0')
-                          << entry.tidHash << std::dec
-                          << " " << entry.kernelTid << std::endl;
-            if (entry.crashOrigin) {
-                crashDumpFile << "(crashed here)" << std::endl;
-            }
-            for (void* stack_ptr: entry.stackPtrs) {
-                crashDumpFile << std::hex << stack_ptr << std::dec << std::endl;
-            }
-            crashDumpFile << std::endl;
+    if (!got_other_stacks) {
+        std::string msg = "will not explore other threads (disabled by user)";
+        flushAllLoggers(2, msg);
+        if (crashDumpFile.is_open()) {
+            crashDumpFile << msg << "\n\n";
         }
     }
+}
 
-    for (RawStackInfo& entry: crashDumpThreadStacks) {
-        flushStackTraceBuffer(entry);
+void SimpleLoggerMgr::flushRawStack(RawStackInfo& stack_info) {
+    if (!crashDumpFile.is_open()) return;
+
+    crashDumpFile << "Thread " << std::hex << std::setw(4) << std::setfill('0')
+                  << stack_info.tidHash << std::dec
+                  << " " << stack_info.kernelTid << std::endl;
+    if (stack_info.crashOrigin) {
+        crashDumpFile << "(crashed here)" << std::endl;
     }
+    for (void* stack_ptr: stack_info.stackPtrs) {
+        crashDumpFile << std::hex << stack_ptr << std::dec << std::endl;
+    }
+    crashDumpFile << std::endl;
 }
 
 void SimpleLoggerMgr::addRawStackInfo(bool crash_origin) {
@@ -288,9 +294,9 @@ void SimpleLoggerMgr::addRawStackInfo(bool crash_origin) {
     }
 }
 
-void SimpleLoggerMgr::logStackBacktrace() {
+void SimpleLoggerMgr::logStackBacktrace(size_t timeout_ms) {
     // Set abort timeout: 60 seconds.
-    abortTimer = 60 * 1000;
+    abortTimer = timeout_ms;
 
     if (!crashDumpPath.empty() && !crashDumpFile.is_open()) {
         // Open crash dump file.
@@ -318,7 +324,17 @@ void SimpleLoggerMgr::logStackBacktrace() {
 
     flushCriticalInfo();
     addRawStackInfo(true);
+    // Collect other threads' stack info.
     logStackBackTraceOtherThreads();
+
+    // Now print out.
+    // For the case where `addr2line` is hanging, flush raw pointer first.
+    for (RawStackInfo& entry: crashDumpThreadStacks) {
+        flushRawStack(entry);
+    }
+    for (RawStackInfo& entry: crashDumpThreadStacks) {
+        flushStackTraceBuffer(entry);
+    }
 }
 
 void SimpleLoggerMgr::handleSegFault(int sig) {
@@ -388,8 +404,11 @@ void SimpleLoggerMgr::flushWorker() {
     }
 }
 
-void SimpleLoggerMgr::setCrashDumpPath(const std::string& path) {
+void SimpleLoggerMgr::setCrashDumpPath(const std::string& path,
+                                       bool origin_only)
+{
     crashDumpPath = path;
+    crashDumpOriginOnly = origin_only;
 }
 
 
@@ -399,6 +418,7 @@ SimpleLoggerMgr::SimpleLoggerMgr()
     , oldSigAbortHandler(nullptr)
     , stackTraceBuffer(nullptr)
     , crashOriginThread(0)
+    , crashDumpOriginOnly(false)
     , abortTimer(0)
 {
     oldSigSegvHandler = signal(SIGSEGV, SimpleLoggerMgr::handleSegFault);
@@ -609,10 +629,20 @@ void SimpleLogger::setCriticalInfo(const std::string& info_str) {
     }
 }
 
-void SimpleLogger::setCrashDumpPath(const std::string& path) {
+void SimpleLogger::setCrashDumpPath(const std::string& path,
+                                    bool origin_only)
+{
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     if (mgr) {
-        mgr->setCrashDumpPath(path);
+        mgr->setCrashDumpPath(path, origin_only);
+    }
+}
+
+void SimpleLogger::logStackBacktrace() {
+    SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
+    if (mgr) {
+        mgr->enableOnlyOneDisplayer();
+        mgr->logStackBacktrace(0);
     }
 }
 
@@ -690,7 +720,9 @@ void SimpleLogger::findMinMaxRevNum( size_t& min_revnum_out,
         }
         min_revnum = std::min(min_revnum, revnum);
     }
-    closedir(dir_info);
+    if (dir_info) {
+        closedir(dir_info);
+    }
 
     min_revnum_out = min_revnum;
     max_revnum_out = max_revnum;
@@ -778,7 +810,7 @@ void SimpleLogger::put(int level,
     static const char* lv_names[7] = {"====",
                                       "FATL", "ERRO", "WARN",
                                       "INFO", "DEBG", "TRAC"};
-    thread_local char msg[MSG_SIZE];
+    char msg[MSG_SIZE];
     thread_local std::thread::id tid = std::this_thread::get_id();
     thread_local uint32_t tid_hash = std::hash<std::thread::id>{}(tid) % 0x10000;
     thread_local ThreadWrapper thread_wrapper;

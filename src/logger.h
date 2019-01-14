@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.7
+ * Version: 0.3.10
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -210,7 +210,9 @@ public:
     ~SimpleLogger();
 
     static void setCriticalInfo(const std::string& info_str);
-    static void setCrashDumpPath(const std::string& path);
+    static void setCrashDumpPath(const std::string& path,
+                                 bool origin_only = false);
+    static void logStackBacktrace();
 
     static void shutdown();
     static std::string replaceString(const std::string& src_str,
@@ -334,15 +336,8 @@ public:
     static void handleStackTrace(int sig, siginfo_t* info, void* secret);
     static void flushWorker();
 
-    void addRawStackInfo(bool crash_origin = false);
-    void logStackBackTraceOtherThreads();
-    void logStackBacktrace();
+    void logStackBacktrace(size_t timeout_ms = 60*1000);
     void flushCriticalInfo();
-    void _flushStackTraceBuffer(size_t buffer_len,
-                                uint32_t tid_hash,
-                                uint64_t kernel_tid,
-                                bool crash_origin);
-    void flushStackTraceBuffer(RawStackInfo& stack_info);
     void enableOnlyOneDisplayer();
     void flushAllLoggers() { flushAllLoggers(0, std::string()); }
     void flushAllLoggers(int level, const std::string& msg);
@@ -353,7 +348,8 @@ public:
     void sleep(size_t ms);
     bool chkTermination() const;
     void setCriticalInfo(const std::string& info_str);
-    void setCrashDumpPath(const std::string& path);
+    void setCrashDumpPath(const std::string& path,
+                          bool origin_only);
     const std::string& getCriticalInfo() const;
 
     static std::mutex displayLock;
@@ -371,6 +367,15 @@ private:
 
     SimpleLoggerMgr();
     ~SimpleLoggerMgr();
+
+    void _flushStackTraceBuffer(size_t buffer_len,
+                                uint32_t tid_hash,
+                                uint64_t kernel_tid,
+                                bool crash_origin);
+    void flushStackTraceBuffer(RawStackInfo& stack_info);
+    void flushRawStack(RawStackInfo& stack_info);
+    void addRawStackInfo(bool crash_origin = false);
+    void logStackBackTraceOtherThreads();
 
     std::mutex loggersLock;
     std::unordered_set<SimpleLogger*> loggers;
@@ -396,6 +401,7 @@ private:
 
     std::string crashDumpPath;
     std::ofstream crashDumpFile;
+    bool crashDumpOriginOnly;
 
     std::atomic<uint64_t> abortTimer;
 
