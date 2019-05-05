@@ -1,3 +1,4 @@
+
 Simple Logger
 ---
 Logging library for C++ programs.
@@ -17,11 +18,13 @@ Please refer to [basic_example.cc](example/basic_example.cc)
 Features
 ---
 * Multi-thread safe.
-* Lightweight: observed up to 6M logs/second (multi-threaded) on i7 8-thread machine.
+* Lightweight: observed up to 6M logs/second (by multi threads) on i7 8-thread machine.
 * Different log levels and formats for file and display.
 * Circular log file reclaiming.
-* Compressing (`tar.gz`) old log files.
-* Stack backtrace on crash or abort (only on Linux, `addr2line` is needed).
+* Auto compression (`tar.gz`) of old log files.
+* Stack backtrace on crash or abort.
+  * Linux and Mac only.
+  * Linux: `addr2line` is needed.
 
 Screenshot
 ---
