@@ -105,8 +105,6 @@ std::atomic<SimpleLoggerMgr*> SimpleLoggerMgr::instance(nullptr);
 std::mutex SimpleLoggerMgr::instanceLock;
 std::mutex SimpleLoggerMgr::displayLock;
 
-static const std::memory_order MOR = std::memory_order_relaxed;
-
 struct SimpleLoggerMgr::CompElem {
     CompElem(uint64_t num, SimpleLogger* logger)
         : fileNum(num), targetLogger(logger)
@@ -116,36 +114,36 @@ struct SimpleLoggerMgr::CompElem {
 };
 
 SimpleLoggerMgr* SimpleLoggerMgr::init() {
-    SimpleLoggerMgr* mgr = instance.load(MOR);
+    SimpleLoggerMgr* mgr = instance.load(SimpleLogger::MOR);
     if (!mgr) {
         std::lock_guard<std::mutex> l(instanceLock);
-        mgr = instance.load(MOR);
+        mgr = instance.load(SimpleLogger::MOR);
         if (!mgr) {
             mgr = new SimpleLoggerMgr();
-            instance.store(mgr, MOR);
+            instance.store(mgr, SimpleLogger::MOR);
         }
     }
     return mgr;
 }
 
 SimpleLoggerMgr* SimpleLoggerMgr::get() {
-    SimpleLoggerMgr* mgr = instance.load(MOR);
+    SimpleLoggerMgr* mgr = instance.load(SimpleLogger::MOR);
     if (!mgr) return init();
     return mgr;
 }
 
 SimpleLoggerMgr* SimpleLoggerMgr::getWithoutInit() {
-    SimpleLoggerMgr* mgr = instance.load(MOR);
+    SimpleLoggerMgr* mgr = instance.load(SimpleLogger::MOR);
     return mgr;
 }
 
 void SimpleLoggerMgr::destroy() {
     std::lock_guard<std::mutex> l(instanceLock);
-    SimpleLoggerMgr* mgr = instance.load(MOR);
+    SimpleLoggerMgr* mgr = instance.load(SimpleLogger::MOR);
     if (mgr) {
         mgr->flushAllLoggers();
         delete mgr;
-        instance.store(nullptr, MOR);
+        instance.store(nullptr, SimpleLogger::MOR);
     }
 }
 
@@ -875,7 +873,7 @@ void SimpleLogger::put(int level,
                        const char* format,
                        ...)
 {
-    if (level > curLogLevel) return;
+    if (level > curLogLevel.load(MOR)) return;
     if (!fs) return;
 
     static const char* lv_names[7] = {"====",
@@ -1058,6 +1056,7 @@ bool SimpleLogger::flush(size_t start_pos) {
         fs.open(getLogFilePath(curRevnum), std::ofstream::out | std::ofstream::app);
 
         // Compress it (tar gz). Register to the global queue.
+#ifndef SUPPRESS_TSAN_FALSE_ALARMS
         SimpleLoggerMgr* mgr = SimpleLoggerMgr::getWithoutInit();
         if (mgr) {
             numCompJobs.fetch_add(1);
@@ -1065,6 +1064,7 @@ bool SimpleLogger::flush(size_t start_pos) {
                 new SimpleLoggerMgr::CompElem(curRevnum-1, this);
             mgr->addCompElem(elem);
         }
+#endif
     }
 
     return true;

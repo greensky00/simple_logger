@@ -92,6 +92,7 @@ class SimpleLogger {
     friend class SimpleLoggerMgr;
 public:
     static const int MSG_SIZE = 4096;
+    static const std::memory_order MOR = std::memory_order_relaxed;
 
     enum Levels {
         SYS         = 0,
@@ -224,14 +225,14 @@ public:
     int start();
     int stop();
 
-    inline bool traceAllowed() const { return (curLogLevel >= 6); }
-    inline bool debugAllowed() const { return (curLogLevel >= 5); }
+    inline bool traceAllowed() const { return (curLogLevel.load(MOR) >= 6); }
+    inline bool debugAllowed() const { return (curLogLevel.load(MOR) >= 5); }
 
     void setLogLevel(int level);
     void setDispLevel(int level);
 
-    inline int getLogLevel()  const { return curLogLevel; }
-    inline int getDispLevel() const { return curDispLevel; }
+    inline int getLogLevel()  const { return curLogLevel.load(MOR); }
+    inline int getDispLevel() const { return curDispLevel.load(MOR); }
 
     void put(int level,
              const char* source_file,
@@ -260,19 +261,13 @@ private:
 
     // Log up to `curLogLevel`, default: 6.
     // Disable: -1.
-#ifdef SUPPRESS_TSAN_FALSE_ALARMS
     std::atomic<int> curLogLevel;
-#else
-    int curLogLevel;
-#endif
+
     // Display (print out on terminal) up to `curDispLevel`,
     // default: 4 (do not print debug and trace).
     // Disable: -1.
-#ifdef SUPPRESS_TSAN_FALSE_ALARMS
     std::atomic<int> curDispLevel;
-#else
-    int curDispLevel;
-#endif
+
     std::mutex displayLock;
 
     int tzGap;

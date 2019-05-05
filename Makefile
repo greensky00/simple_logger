@@ -5,6 +5,7 @@ CXXFLAGS = \
 	-I. -I./src -I./examples -I./tests
 
 CXXFLAGS += -Wall -std=c++11
+#CXXFLAGS += -fsanitize=thread -fuse-ld=gold -DSUPPRESS_TSAN_FALSE_ALARMS=1
 #CXXFLAGS += -O3
 
 BASIC_TEST = \
