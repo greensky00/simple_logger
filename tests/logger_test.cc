@@ -18,6 +18,7 @@ int logger_st_test() {
 
     SimpleLogger* ll = new SimpleLogger(filename, 128);
     ll->start();
+    ll->setLogLevel(6);
 
     TestSuite::Timer tt(1000);
 
@@ -74,6 +75,7 @@ int logger_mt_test() {
 
     SimpleLogger* ll = new SimpleLogger(filename, 128);
     ll->start();
+    ll->setLogLevel(6);
 
     TestSuite::Timer tt(1000);
     size_t num_cores = std::thread::hardware_concurrency();
@@ -104,6 +106,7 @@ int logger_wo_stack_info_test() {
 
     SimpleLogger* ll = new SimpleLogger(filename, 128);
     ll->start();
+    ll->setLogLevel(6);
 
     TestSuite::Timer tt(1000);
 
@@ -130,6 +133,7 @@ int logger_split_comp_test(uint64_t num) {
 
     ll = new SimpleLogger(filename, 128, 32*1024*1024);
     ll->start();
+    ll->setLogLevel(6);
     for (; ii<num/2; ++ii) {
         if (ii && ii % 100000 == 0) {
             _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
@@ -141,6 +145,7 @@ int logger_split_comp_test(uint64_t num) {
 
     ll = new SimpleLogger(filename, 128, 32*1024*1024);
     ll->start();
+    ll->setLogLevel(6);
     for (; ii<num; ++ii) {
         if (ii && ii % 100000 == 0) {
             _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
@@ -166,6 +171,7 @@ int logger_reopen_with_split_option_test(uint64_t num) {
 
     ll = new SimpleLogger(filename, 128, 256*1024*1024);
     ll->start();
+    ll->setLogLevel(6);
     for (; ii<num/2; ++ii) {
         if (ii && ii % 100000 == 0) {
             _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
@@ -177,6 +183,7 @@ int logger_reopen_with_split_option_test(uint64_t num) {
 
     ll = new SimpleLogger(filename, 128, 32*1024*1024);
     ll->start();
+    ll->setLogLevel(6);
     for (; ii<num; ++ii) {
         if (ii && ii % 100000 == 0) {
             _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
@@ -202,6 +209,7 @@ int logger_reclaim_test(uint64_t num) {
 
     ll = new SimpleLogger(filename, 128, 1024*1024, 4);
     ll->start();
+    ll->setLogLevel(6);
     for (; ii<num/2; ++ii) {
         if (ii && ii % 100000 == 0) {
             _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
@@ -213,6 +221,7 @@ int logger_reclaim_test(uint64_t num) {
 
     ll = new SimpleLogger(filename, 128, 1024*1024, 4);
     ll->start();
+    ll->setLogLevel(6);
     for (; ii<num; ++ii) {
         if (ii && ii % 100000 == 0) {
             _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
@@ -238,6 +247,7 @@ int logger_reopen_with_reclaim_option_test(uint64_t num) {
 
     ll = new SimpleLogger(filename, 128, 1024*1024, 0);
     ll->start();
+    ll->setLogLevel(6);
     for (; ii<num/2; ++ii) {
         if (ii && ii % 100000 == 0) {
             _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
@@ -249,6 +259,7 @@ int logger_reopen_with_reclaim_option_test(uint64_t num) {
 
     ll = new SimpleLogger(filename, 128, 1024*1024, 4);
     ll->start();
+    ll->setLogLevel(6);
     for (; ii<num; ++ii) {
         if (ii && ii % 100000 == 0) {
             _log_info(ll, "%ld: %ld", ii, tt.getTimeUs());
@@ -282,6 +293,7 @@ int logger_function_as_parameter_test() {
 
     ll = new SimpleLogger(filename, 128, 1024*1024, 0);
     ll->start();
+    ll->setLogLevel(6);
 
     for (int ii=1; ii<=6; ++ii) {
         ll->setLogLevel(ii);

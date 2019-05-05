@@ -26,8 +26,33 @@ void thread_sample(SimpleLogger* ll, size_t id) {
     }
 }
 
+int* ccc(int depth) {
+    if (depth) return ccc(depth  - 1);
+
+    int* a = NULL;
+    int b = *a;
+    (void)b;
+    return a;
+}
+
+void bbb(char c) {
+    int* a = ccc(10);
+    (void)a;
+}
+
+int aaa(int a, int b) {
+    bbb('c');
+    return a;
+}
+
 int main() {
     std::string filename = "./example_log.log";
+
+    // If it is set to `true` (default == true), logger will display
+    // the stack trace of the origin (being crashed) thread only.
+    // It works only on Linux.
+    SimpleLogger::setStackTraceOriginOnly(false);
+
     SimpleLogger* ll = new SimpleLogger(filename);
     ll->start();
 
@@ -41,9 +66,7 @@ int main() {
     TestSuite::sleep_ms(100);
 
     // Make crash
-    int* a = NULL;
-    int b = *a;
-    (void)b;
+    aaa(1, 2);
 
     for (std::thread*& entry: threads) {
         if (entry->joinable()) {

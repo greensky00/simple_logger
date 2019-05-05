@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.10
+ * Version: 0.3.13
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -36,6 +36,7 @@
 #include <iomanip>
 #include <iostream>
 
+#include <assert.h>
 #include <dirent.h>
 #ifdef __linux__
     #include <pthread.h>
@@ -105,6 +106,14 @@ std::mutex SimpleLoggerMgr::instanceLock;
 std::mutex SimpleLoggerMgr::displayLock;
 
 static const std::memory_order MOR = std::memory_order_relaxed;
+
+struct SimpleLoggerMgr::CompElem {
+    CompElem(uint64_t num, SimpleLogger* logger)
+        : fileNum(num), targetLogger(logger)
+        {}
+    uint64_t fileNum;
+    SimpleLogger* targetLogger;
+};
 
 SimpleLoggerMgr* SimpleLoggerMgr::init() {
     SimpleLoggerMgr* mgr = instance.load(MOR);
@@ -391,7 +400,7 @@ void SimpleLoggerMgr::flushWorker() {
     while (!mgr->chkTermination()) {
         // Every 500ms.
         size_t sub_ms = 500;
-        mgr->sleep(sub_ms);
+        mgr->sleepFlusher(sub_ms);
         mgr->flushAllLoggers();
         if (mgr->abortTimer) {
             if (mgr->abortTimer > sub_ms) {
@@ -404,10 +413,43 @@ void SimpleLoggerMgr::flushWorker() {
     }
 }
 
+void SimpleLoggerMgr::compressWorker() {
+    SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
+    bool sleep_next_time = true;
+    while (!mgr->chkTermination()) {
+        // Every 500ms.
+        size_t sub_ms = 500;
+        if (sleep_next_time) {
+            mgr->sleepCompressor(sub_ms);
+        }
+        sleep_next_time = true;
+
+        CompElem* elem = nullptr;
+        {   std::lock_guard<std::mutex> l(mgr->pendingCompElemsLock);
+            auto entry = mgr->pendingCompElems.begin();
+            if (entry != mgr->pendingCompElems.end()) {
+                elem = *entry;
+                mgr->pendingCompElems.erase(entry);
+            }
+        }
+
+        if (elem) {
+            elem->targetLogger->doCompression(elem->fileNum);
+            delete elem;
+            // Continuous compression if pending item exists.
+            sleep_next_time = false;
+        }
+    }
+}
+
 void SimpleLoggerMgr::setCrashDumpPath(const std::string& path,
                                        bool origin_only)
 {
     crashDumpPath = path;
+    setStackTraceOriginOnly(origin_only);
+}
+
+void SimpleLoggerMgr::setStackTraceOriginOnly(bool origin_only) {
     crashDumpOriginOnly = origin_only;
 }
 
@@ -418,12 +460,14 @@ SimpleLoggerMgr::SimpleLoggerMgr()
     , oldSigAbortHandler(nullptr)
     , stackTraceBuffer(nullptr)
     , crashOriginThread(0)
-    , crashDumpOriginOnly(false)
+    , crashDumpOriginOnly(true)
     , abortTimer(0)
 {
     oldSigSegvHandler = signal(SIGSEGV, SimpleLoggerMgr::handleSegFault);
     oldSigAbortHandler = signal(SIGABRT, SimpleLoggerMgr::handleSegAbort);
+
     tFlush = std::thread(SimpleLoggerMgr::flushWorker);
+    tCompress = std::thread(SimpleLoggerMgr::compressWorker);
 
     stackTraceBuffer = (char*)malloc(stackTraceBufferSize);
 }
@@ -434,11 +478,17 @@ SimpleLoggerMgr::~SimpleLoggerMgr() {
     signal(SIGSEGV, oldSigSegvHandler);
     signal(SIGABRT, oldSigAbortHandler);
 
-    std::unique_lock<std::mutex> l(cvSleepLock);
-    cvSleep.notify_all();
-    l.unlock();
+    {   std::unique_lock<std::mutex> l(cvFlusherLock);
+        cvFlusher.notify_all();
+    }
+    {   std::unique_lock<std::mutex> l(cvCompressorLock);
+        cvCompressor.notify_all();
+    }
     if (tFlush.joinable()) {
         tFlush.join();
+    }
+    if (tCompress.joinable()) {
+        tCompress.join();
     }
 
     free(stackTraceBuffer);
@@ -498,9 +548,23 @@ void SimpleLoggerMgr::removeThread(uint64_t tid) {
     activeThreads.erase(tid);
 }
 
-void SimpleLoggerMgr::sleep(size_t ms) {
-    std::unique_lock<std::mutex> l(cvSleepLock);
-    cvSleep.wait_for(l, std::chrono::milliseconds(ms));
+void SimpleLoggerMgr::addCompElem(SimpleLoggerMgr::CompElem* elem) {
+    {   std::unique_lock<std::mutex> l(pendingCompElemsLock);
+        pendingCompElems.push_back(elem);
+    }
+    {   std::unique_lock<std::mutex> l(cvCompressorLock);
+        cvCompressor.notify_all();
+    }
+}
+
+void SimpleLoggerMgr::sleepFlusher(size_t ms) {
+    std::unique_lock<std::mutex> l(cvFlusherLock);
+    cvFlusher.wait_for(l, std::chrono::milliseconds(ms));
+}
+
+void SimpleLoggerMgr::sleepCompressor(size_t ms) {
+    std::unique_lock<std::mutex> l(cvCompressorLock);
+    cvCompressor.wait_for(l, std::chrono::milliseconds(ms));
 }
 
 bool SimpleLoggerMgr::chkTermination() const {
@@ -606,20 +670,18 @@ SimpleLogger::SimpleLogger(const std::string& file_path,
     : filePath(replaceString(file_path, "//", "/"))
     , maxLogFiles(max_log_files)
     , maxLogFileSize(log_file_size_limit)
-    , numCompThreads(0)
+    , numCompJobs(0)
     , curLogLevel(4)
     , curDispLevel(4)
     , tzGap( SimpleLoggerMgr::getTzGap() )
     , cursor(0)
     , logs(max_log_elems)
-    , flushingLogs(false)
 {
     findMinMaxRevNum(minRevnum, curRevnum);
 }
 
 SimpleLogger::~SimpleLogger() {
     stop();
-    while (numCompThreads) std::this_thread::yield();
 }
 
 void SimpleLogger::setCriticalInfo(const std::string& info_str) {
@@ -635,6 +697,13 @@ void SimpleLogger::setCrashDumpPath(const std::string& path,
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     if (mgr) {
         mgr->setCrashDumpPath(path, origin_only);
+    }
+}
+
+void SimpleLogger::setStackTraceOriginOnly(bool origin_only) {
+    SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
+    if (mgr) {
+        mgr->setStackTraceOriginOnly(origin_only);
     }
 }
 
@@ -769,6 +838,8 @@ int SimpleLogger::stop() {
         flushAll();
         fs.flush();
         fs.close();
+
+        while (numCompJobs.load() > 0) std::this_thread::yield();
     }
 
     return 0;
@@ -930,18 +1001,22 @@ void SimpleLogger::put(int level,
     l.unlock();
 }
 
-void SimpleLogger::compressThread(size_t file_num) {
+void SimpleLogger::doCompression(size_t file_num) {
     int r = 0;
     std::string filename = getLogFilePath(file_num);
     std::string cmd;
     cmd = "tar zcvf " + filename + ".tar.gz " + filename +
           " > /dev/null";
-    r = system(cmd.c_str());
-    (void)r;
+    {   FILE* fp = popen(cmd.c_str(), "r");
+        if (fp) r = pclose(fp);
+        (void)r;
+    }
 
     cmd = "rm -f " + filename + " > /dev/null";
-    r = system(cmd.c_str());
-    (void)r;
+    {   FILE* fp = popen(cmd.c_str(), "r");
+        if (fp) r = pclose(fp);
+        (void)r;
+    }
 
     // Remove previous log files.
     if (maxLogFiles && file_num >= maxLogFiles) {
@@ -949,19 +1024,20 @@ void SimpleLogger::compressThread(size_t file_num) {
             filename = getLogFilePath(ii);
             std::string filename_tar = getLogFilePath(ii) + ".tar.gz";
             cmd = "rm -f " + filename + " " + filename_tar + " > /dev/null";
-            r = system(cmd.c_str());
-            (void)r;
+            {   FILE* fp = popen(cmd.c_str(), "r");
+                if (fp) r = pclose(fp);
+                (void)r;
+            }
             minRevnum = ii+1;
         }
     }
 
-    numCompThreads.fetch_sub(1);
+    numCompJobs.fetch_sub(1);
 }
 
 bool SimpleLogger::flush(size_t start_pos) {
-    bool exp = false;
-    bool val = true;
-    if (!flushingLogs.compare_exchange_strong(exp, val, MOR)) return false;
+    std::unique_lock<std::mutex> ll(flushingLogs, std::try_to_lock);
+    if (!ll.owns_lock()) return false;
 
     size_t num = logs.size();
     // Circular flush into file.
@@ -973,7 +1049,6 @@ bool SimpleLogger::flush(size_t start_pos) {
         LogElem& ll = logs[ii];
         ll.flush(fs);
     }
-    fs.flush();
 
     if ( maxLogFileSize &&
          fs.tellp() > (int64_t)maxLogFileSize ) {
@@ -982,13 +1057,16 @@ bool SimpleLogger::flush(size_t start_pos) {
         fs.close();
         fs.open(getLogFilePath(curRevnum), std::ofstream::out | std::ofstream::app);
 
-        // Compress it (tar gz)
-        numCompThreads.fetch_add(1);
-        std::thread t(&SimpleLogger::compressThread, this, curRevnum-1);
-        t.detach();
+        // Compress it (tar gz). Register to the global queue.
+        SimpleLoggerMgr* mgr = SimpleLoggerMgr::getWithoutInit();
+        if (mgr) {
+            numCompJobs.fetch_add(1);
+            SimpleLoggerMgr::CompElem* elem =
+                new SimpleLoggerMgr::CompElem(curRevnum-1, this);
+            mgr->addCompElem(elem);
+        }
     }
 
-    flushingLogs.store(false, MOR);
     return true;
 }
 

@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.10
+ * Version: 0.3.13
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -34,11 +34,12 @@
 #include <atomic>
 #include <condition_variable>
 #include <fstream>
+#include <list>
 #include <mutex>
-#include <unordered_set>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 #include <signal.h>
@@ -47,7 +48,7 @@
 
 // To suppress false alarms by thread sanitizer,
 // add -DSUPPRESS_TSAN_FALSE_ALARMS=1 flag to CXXFLAGS.
-//#define SUPPRESS_TSAN_FALSE_ALARMS (1)
+// #define SUPPRESS_TSAN_FALSE_ALARMS (1)
 
 // 0: System  [====]
 // 1: Fatal   [FATL]
@@ -211,7 +212,8 @@ public:
 
     static void setCriticalInfo(const std::string& info_str);
     static void setCrashDumpPath(const std::string& path,
-                                 bool origin_only = false);
+                                 bool origin_only = true);
+    static void setStackTraceOriginOnly(bool origin_only);
     static void logStackBacktrace();
 
     static void shutdown();
@@ -244,7 +246,7 @@ private:
     void findMinMaxRevNum(size_t& min_revnum_out,
                           size_t& max_revnum_out);
     std::string getLogFilePath(size_t file_num) const;
-    void compressThread(size_t file_num);
+    void doCompression(size_t file_num);
     bool flush(size_t start_pos);
 
     std::string filePath;
@@ -254,7 +256,7 @@ private:
     std::ofstream fs;
 
     uint64_t maxLogFileSize;
-    std::atomic<uint32_t> numCompThreads;
+    std::atomic<uint32_t> numCompJobs;
 
     // Log up to `curLogLevel`, default: 6.
     // Disable: -1.
@@ -276,12 +278,14 @@ private:
     int tzGap;
     std::atomic<uint64_t> cursor;
     std::vector<LogElem> logs;
-    std::atomic<bool> flushingLogs;
+    std::mutex flushingLogs;
 };
 
 // Singleton class
 class SimpleLoggerMgr {
 public:
+    struct CompElem;
+
     struct TimeInfo {
         TimeInfo(std::tm* src)
             : year(src->tm_year + 1900)
@@ -294,7 +298,8 @@ public:
             , usec(0) {}
         TimeInfo(std::chrono::system_clock::time_point now) {
             std::time_t raw_time = std::chrono::system_clock::to_time_t(now);
-            std::tm* lt_tm = std::localtime(&raw_time);
+            std::tm new_time;
+            std::tm* lt_tm = localtime_r(&raw_time, &new_time);
             year = lt_tm->tm_year + 1900;
             month = lt_tm->tm_mon + 1;
             day = lt_tm->tm_mday;
@@ -335,6 +340,7 @@ public:
     static void handleSegAbort(int sig);
     static void handleStackTrace(int sig, siginfo_t* info, void* secret);
     static void flushWorker();
+    static void compressWorker();
 
     void logStackBacktrace(size_t timeout_ms = 60*1000);
     void flushCriticalInfo();
@@ -345,11 +351,14 @@ public:
     void removeLogger(SimpleLogger* logger);
     void addThread(uint64_t tid);
     void removeThread(uint64_t tid);
-    void sleep(size_t ms);
+    void addCompElem(SimpleLoggerMgr::CompElem* elem);
+    void sleepFlusher(size_t ms);
+    void sleepCompressor(size_t ms);
     bool chkTermination() const;
     void setCriticalInfo(const std::string& info_str);
     void setCrashDumpPath(const std::string& path,
                           bool origin_only);
+    void setStackTraceOriginOnly(bool origin_only);
     const std::string& getCriticalInfo() const;
 
     static std::mutex displayLock;
@@ -383,10 +392,29 @@ private:
     std::mutex activeThreadsLock;
     std::unordered_set<uint64_t> activeThreads;
 
+    // Periodic log flushing thread.
     std::thread tFlush;
-    std::condition_variable cvSleep;
-    std::mutex cvSleepLock;
+
+    // Old log file compression thread.
+    std::thread tCompress;
+
+    // List of files to be compressed.
+    std::list<CompElem*> pendingCompElems;
+
+    // Lock for `pendingCompFiles`.
+    std::mutex pendingCompElemsLock;
+
+    // Condition variable for BG flusher.
+    std::condition_variable cvFlusher;
+    std::mutex cvFlusherLock;
+
+    // Condition variable for BG compressor.
+    std::condition_variable cvCompressor;
+    std::mutex cvCompressorLock;
+
+    // Termination signal.
     std::atomic<bool> termination;
+
     void (*oldSigSegvHandler)(int);
     void (*oldSigAbortHandler)(int);
 
