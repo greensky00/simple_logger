@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.13
+ * Version: 0.3.15
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -461,8 +461,19 @@ SimpleLoggerMgr::SimpleLoggerMgr()
     , crashDumpOriginOnly(true)
     , abortTimer(0)
 {
-    oldSigSegvHandler = signal(SIGSEGV, SimpleLoggerMgr::handleSegFault);
-    oldSigAbortHandler = signal(SIGABRT, SimpleLoggerMgr::handleSegAbort);
+    std::string env_segv_str;
+    const char* env_segv = std::getenv("SIMPLELOGGER_HANDLE_SEGV");
+    if (env_segv) env_segv_str = env_segv;
+
+    if ( env_segv_str == "OFF" ||
+         env_segv_str == "off" ||
+         env_segv_str == "FALSE" ||
+         env_segv_str == "false" ) {
+        // Manually turned off by user, via env var.
+    } else {
+        oldSigSegvHandler = signal(SIGSEGV, SimpleLoggerMgr::handleSegFault);
+        oldSigAbortHandler = signal(SIGABRT, SimpleLoggerMgr::handleSegAbort);
+    }
 
     tFlush = std::thread(SimpleLoggerMgr::flushWorker);
     tCompress = std::thread(SimpleLoggerMgr::compressWorker);
@@ -473,8 +484,8 @@ SimpleLoggerMgr::SimpleLoggerMgr()
 SimpleLoggerMgr::~SimpleLoggerMgr() {
     termination = true;
 
-    signal(SIGSEGV, oldSigSegvHandler);
-    signal(SIGABRT, oldSigAbortHandler);
+    if (oldSigSegvHandler) signal(SIGSEGV, oldSigSegvHandler);
+    if (oldSigAbortHandler) signal(SIGABRT, oldSigAbortHandler);
 
     {   std::unique_lock<std::mutex> l(cvFlusherLock);
         cvFlusher.notify_all();
@@ -1047,6 +1058,7 @@ bool SimpleLogger::flush(size_t start_pos) {
         LogElem& ll = logs[ii];
         ll.flush(fs);
     }
+    fs.flush();
 
     if ( maxLogFileSize &&
          fs.tellp() > (int64_t)maxLogFileSize ) {

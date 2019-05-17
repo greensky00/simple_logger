@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Stack Backtrace
- * Version: 0.3.4
+ * Version: 0.3.5
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -33,8 +33,11 @@
 
 // LCOV_EXCL_START
 
-#define SIZE_T_UNUSED   size_t  __attribute__((unused))
-#define VOID_UNUSED     void    __attribute__((unused))
+#define SIZE_T_UNUSED   size_t      __attribute__((unused))
+#define VOID_UNUSED     void        __attribute__((unused))
+#define UINT64_T_UNUSED uint64_t    __attribute__((unused))
+#define STR_UNUSED      std::string __attribute__((unused))
+#define INTPTR_UNUSED   intptr_t    __attribute__((unused))
 
 #include <cstddef>
 #include <sstream>
@@ -50,13 +53,13 @@
 #include <mach-o/getsect.h>
 #include <mach-o/dyld.h>
 
-uint64_t static_base_address(void) {
+static UINT64_T_UNUSED static_base_address(void) {
     const struct segment_command_64* command = getsegbyname(SEG_TEXT /*"__TEXT"*/);
     uint64_t addr = command->vmaddr;
     return addr;
 }
 
-std::string get_exec_path() {
+static STR_UNUSED get_exec_path() {
     char path[1024];
     uint32_t size = sizeof(path);
     if (_NSGetExecutablePath(path, &size) != 0) return std::string();
@@ -64,14 +67,14 @@ std::string get_exec_path() {
     return path;
 }
 
-std::string get_file_part(const std::string& full_path) {
+static STR_UNUSED get_file_part(const std::string& full_path) {
     size_t pos = full_path.rfind("/");
     if (pos == std::string::npos) return full_path;
 
     return full_path.substr(pos + 1, full_path.size() - pos - 1);
 }
 
-intptr_t image_slide(void) {
+static INTPTR_UNUSED image_slide(void) {
     std::string exec_path = get_exec_path();
     if (exec_path.empty()) return -1;
 
