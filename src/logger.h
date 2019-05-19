@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.16
+ * Version: 0.3.17
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation

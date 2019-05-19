@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.16
+ * Version: 0.3.17
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -40,6 +40,7 @@
 #include <iostream>
 
 #include <assert.h>
+
 #if defined(__linux__) || defined(__APPLE__)
     #include <dirent.h>
     #ifdef __linux__
@@ -48,11 +49,13 @@
     #include <sys/syscall.h>
     #include <sys/types.h>
     #include <unistd.h>
+
 #elif defined(WIN32) || defined(_WIN32)
-    #include <windows.h>
+    #include <Windows.h>
     #undef min
     #undef max
 #endif
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -135,33 +138,24 @@ SimpleLoggerMgr::TimeInfo::TimeInfo(std::tm* src)
 
 SimpleLoggerMgr::TimeInfo::TimeInfo(std::chrono::system_clock::time_point now) {
     std::time_t raw_time = std::chrono::system_clock::to_time_t(now);
+    std::tm new_time;
 
 #if defined(__linux__) || defined(__APPLE__)
-    std::tm new_time;
     std::tm* lt_tm = localtime_r(&raw_time, &new_time);
-    year = lt_tm->tm_year + 1900;
-    month = lt_tm->tm_mon + 1;
-    day = lt_tm->tm_mday;
-    hour = lt_tm->tm_hour;
-    min = lt_tm->tm_min;
-    sec = lt_tm->tm_sec;
 
 #elif defined(WIN32) || defined(_WIN32)
-    // WARNING: `localtime` is not thread-safe.
-    static std::mutex localtime_lock;
-    std::lock_guard<std::mutex> l(localtime_lock); {
-        std::tm* lt_tm = localtime(&raw_time);
-        year = lt_tm->tm_year + 1900;
-        month = lt_tm->tm_mon + 1;
-        day = lt_tm->tm_mday;
-        hour = lt_tm->tm_hour;
-        min = lt_tm->tm_min;
-        sec = lt_tm->tm_sec;
-    }
+    localtime_s(&new_time, &raw_time);
+    std::tm* lt_tm = &new_time;
 #endif
 
-    size_t us_epoch = std::chrono::duration_cast
-                      < std::chrono::microseconds >
+    year =  lt_tm->tm_year + 1900;
+    month = lt_tm->tm_mon + 1;
+    day =   lt_tm->tm_mday;
+    hour =  lt_tm->tm_hour;
+    min =   lt_tm->tm_min;
+    sec =   lt_tm->tm_sec;
+
+    size_t us_epoch = std::chrono::duration_cast< std::chrono::microseconds >
                       ( now.time_since_epoch() ).count();
     msec = (us_epoch / 1000) % 1000;
     usec = us_epoch % 1000;
@@ -206,9 +200,21 @@ int SimpleLoggerMgr::getTzGap() {
     std::chrono::system_clock::time_point now =
         std::chrono::system_clock::now();
     std::time_t raw_time = std::chrono::system_clock::to_time_t(now);
-    std::tm* lt_tm = std::localtime(&raw_time);
-    TimeInfo lt(lt_tm);
+    std::tm new_time;
+
+#if defined(__linux__) || defined(__APPLE__)
+    std::tm* lt_tm = localtime_r(&raw_time, &new_time);
     std::tm* gmt_tm = std::gmtime(&raw_time);
+
+#elif defined(WIN32) || defined(_WIN32)
+    localtime_s(&new_time, &raw_time);
+    std::tm* lt_tm = &new_time;
+    std::tm new_gmt_time;
+    gmtime_s(&new_gmt_time, &raw_time);
+    std::tm* gmt_tm = &new_gmt_time;
+#endif
+
+    TimeInfo lt(lt_tm);
     TimeInfo gmt(gmt_tm);
 
     return ( (  lt.day * 60 * 24 +  lt.hour * 60 +  lt.min ) -
