@@ -42,3 +42,7 @@ Screenshot
 2018-07-15T19:33:10.550_854-07:00 [448e] [TRAC] trace   [basic_example.cc:34, main()]
 2018-07-15T19:33:10.550_900-07:00 [448e] [====] Stop logger: ./example_log.log  [logger.cc:451, stop()]
 ```
+
+Misc.
+---
+* There are false alarms by thread sanitizer. To suppress it, add `-DSUPPRESS_TSAN_FALSE_ALARMS=1` flag to `CXXFLAGS`.

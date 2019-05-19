@@ -26,17 +26,17 @@ void thread_sample(SimpleLogger* ll, size_t id) {
     }
 }
 
-int* ccc(int depth) {
+volatile int* ccc(int depth) {
     if (depth) return ccc(depth  - 1);
 
-    int* a = NULL;
-    int b = *a;
+    volatile int* a = NULL;
+    volatile int b = *a;
     (void)b;
     return a;
 }
 
 void bbb(char c) {
-    int* a = ccc(10);
+    volatile int* a = ccc(10);
     (void)a;
 }
 
@@ -80,3 +80,4 @@ int main() {
 
     return 0;
 }
+
