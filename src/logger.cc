@@ -1125,13 +1125,13 @@ void SimpleLogger::doCompression(size_t file_num) {
     std::string filename = getLogFilePath(file_num);
     std::string cmd;
     cmd = "tar zcvf " + filename + ".tar.gz " + filename +
-          " > /dev/null";
+          " 2>&1 /dev/null";
     {   FILE* fp = popen(cmd.c_str(), "r");
         if (fp) r = pclose(fp);
         (void)r;
     }
 
-    cmd = "rm -f " + filename + " > /dev/null";
+    cmd = "rm -f " + filename + " 2>&1 /dev/null";
     {   FILE* fp = popen(cmd.c_str(), "r");
         if (fp) r = pclose(fp);
         (void)r;
@@ -1142,7 +1142,7 @@ void SimpleLogger::doCompression(size_t file_num) {
         for (size_t ii=minRevnum; ii<=file_num-maxLogFiles; ++ii) {
             filename = getLogFilePath(ii);
             std::string filename_tar = getLogFilePath(ii) + ".tar.gz";
-            cmd = "rm -f " + filename + " " + filename_tar + " > /dev/null";
+            cmd = "rm -f " + filename + " " + filename_tar + " 2>&1 /dev/null";
             {   FILE* fp = popen(cmd.c_str(), "r");
                 if (fp) r = pclose(fp);
                 (void)r;
