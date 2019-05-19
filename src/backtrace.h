@@ -90,9 +90,9 @@ static INTPTR_UNUSED image_slide(void) {
 #endif
 
 
-#define _snprintf(msg, avail_len, cur_len, msg_len, args...)        \
+#define _snprintf(msg, avail_len, cur_len, msg_len, ...)            \
     avail_len = (avail_len > cur_len) ? (avail_len - cur_len) : 0;  \
-    msg_len = snprintf( msg + cur_len, avail_len, args );           \
+    msg_len = snprintf( msg + cur_len, avail_len, __VA_ARGS__ );    \
     cur_len += (avail_len > msg_len) ? msg_len : avail_len
 
 static SIZE_T_UNUSED

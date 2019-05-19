@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.15
+ * Version: 0.3.16
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -31,21 +31,30 @@
 
 #include "logger.h"
 
-#include "backtrace.h"
+#if defined(__linux__) || defined(__APPLE__)
+    #include "backtrace.h"
+#endif
 
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 
 #include <assert.h>
-#include <dirent.h>
-#ifdef __linux__
-    #include <pthread.h>
+#if defined(__linux__) || defined(__APPLE__)
+    #include <dirent.h>
+    #ifdef __linux__
+        #include <pthread.h>
+    #endif
+    #include <sys/syscall.h>
+    #include <sys/types.h>
+    #include <unistd.h>
+#elif defined(WIN32) || defined(_WIN32)
+    #include <windows.h>
+    #undef min
+    #undef max
 #endif
 #include <stdlib.h>
 #include <string.h>
-#include <sys/syscall.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 #ifndef _CLM_DEFINED
 #define _CLM_DEFINED (1)
@@ -112,6 +121,52 @@ struct SimpleLoggerMgr::CompElem {
     uint64_t fileNum;
     SimpleLogger* targetLogger;
 };
+
+SimpleLoggerMgr::TimeInfo::TimeInfo(std::tm* src)
+    : year(src->tm_year + 1900)
+    , month(src->tm_mon + 1)
+    , day(src->tm_mday)
+    , hour(src->tm_hour)
+    , min(src->tm_min)
+    , sec(src->tm_sec)
+    , msec(0)
+    , usec(0)
+    {}
+
+SimpleLoggerMgr::TimeInfo::TimeInfo(std::chrono::system_clock::time_point now) {
+    std::time_t raw_time = std::chrono::system_clock::to_time_t(now);
+
+#if defined(__linux__) || defined(__APPLE__)
+    std::tm new_time;
+    std::tm* lt_tm = localtime_r(&raw_time, &new_time);
+    year = lt_tm->tm_year + 1900;
+    month = lt_tm->tm_mon + 1;
+    day = lt_tm->tm_mday;
+    hour = lt_tm->tm_hour;
+    min = lt_tm->tm_min;
+    sec = lt_tm->tm_sec;
+
+#elif defined(WIN32) || defined(_WIN32)
+    // WARNING: `localtime` is not thread-safe.
+    static std::mutex localtime_lock;
+    std::lock_guard<std::mutex> l(localtime_lock); {
+        std::tm* lt_tm = localtime(&raw_time);
+        year = lt_tm->tm_year + 1900;
+        month = lt_tm->tm_mon + 1;
+        day = lt_tm->tm_mday;
+        hour = lt_tm->tm_hour;
+        min = lt_tm->tm_min;
+        sec = lt_tm->tm_sec;
+    }
+#endif
+
+    size_t us_epoch = std::chrono::duration_cast
+                      < std::chrono::microseconds >
+                      ( now.time_since_epoch() ).count();
+    msec = (us_epoch / 1000) % 1000;
+    usec = us_epoch % 1000;
+}
+
 
 SimpleLoggerMgr* SimpleLoggerMgr::init() {
     SimpleLoggerMgr* mgr = instance.load(SimpleLogger::MOR);
@@ -205,6 +260,7 @@ void SimpleLoggerMgr::_flushStackTraceBuffer(size_t buffer_len,
 }
 
 void SimpleLoggerMgr::flushStackTraceBuffer(RawStackInfo& stack_info) {
+#if defined(__linux__) || defined(__APPLE__)
     size_t len = _stack_interpret(&stack_info.stackPtrs[0],
                                   stack_info.stackPtrs.size(),
                                   stackTraceBuffer,
@@ -215,6 +271,7 @@ void SimpleLoggerMgr::flushStackTraceBuffer(RawStackInfo& stack_info) {
                            stack_info.tidHash,
                            stack_info.kernelTid,
                            stack_info.crashOrigin);
+#endif
 }
 
 void SimpleLoggerMgr::logStackBackTraceOtherThreads() {
@@ -285,6 +342,7 @@ void SimpleLoggerMgr::flushRawStack(RawStackInfo& stack_info) {
 }
 
 void SimpleLoggerMgr::addRawStackInfo(bool crash_origin) {
+#if defined(__linux__) || defined(__APPLE__)
     void* stack_ptr[256];
     size_t len = _stack_backtrace(stack_ptr, 256);
 
@@ -299,6 +357,7 @@ void SimpleLoggerMgr::addRawStackInfo(bool crash_origin) {
     for (size_t ii=0; ii<len; ++ii) {
         stack_info.stackPtrs.push_back(stack_ptr[ii]);
     }
+#endif
 }
 
 void SimpleLoggerMgr::logStackBacktrace(size_t timeout_ms) {
@@ -345,6 +404,7 @@ void SimpleLoggerMgr::logStackBacktrace(size_t timeout_ms) {
 }
 
 void SimpleLoggerMgr::handleSegFault(int sig) {
+#if defined(__linux__) || defined(__APPLE__)
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     signal(SIGSEGV, mgr->oldSigSegvHandler);
     mgr->enableOnlyOneDisplayer();
@@ -356,9 +416,11 @@ void SimpleLoggerMgr::handleSegFault(int sig) {
     if (mgr->oldSigSegvHandler) {
         mgr->oldSigSegvHandler(sig);
     }
+#endif
 }
 
 void SimpleLoggerMgr::handleSegAbort(int sig) {
+#if defined(__linux__) || defined(__APPLE__)
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     signal(SIGABRT, mgr->oldSigAbortHandler);
     mgr->enableOnlyOneDisplayer();
@@ -368,8 +430,10 @@ void SimpleLoggerMgr::handleSegAbort(int sig) {
     printf("[ABORT] Flushed all logs safely.\n");
     fflush(stdout);
     abort();
+#endif
 }
 
+#if defined(__linux__) || defined(__APPLE__)
 void SimpleLoggerMgr::handleStackTrace(int sig, siginfo_t* info, void* secret) {
 #ifndef __linux__
     // Not support non-Linux platform.
@@ -390,6 +454,7 @@ void SimpleLoggerMgr::handleStackTrace(int sig, siginfo_t* info, void* secret) {
     pthread_kill(mgr->crashOriginThread, SIGUSR2);
 #endif
 }
+#endif
 
 // LCOV_EXCL_STOP
 
@@ -461,6 +526,7 @@ SimpleLoggerMgr::SimpleLoggerMgr()
     , crashDumpOriginOnly(true)
     , abortTimer(0)
 {
+#if defined(__linux__) || defined(__APPLE__)
     std::string env_segv_str;
     const char* env_segv = std::getenv("SIMPLELOGGER_HANDLE_SEGV");
     if (env_segv) env_segv_str = env_segv;
@@ -474,19 +540,20 @@ SimpleLoggerMgr::SimpleLoggerMgr()
         oldSigSegvHandler = signal(SIGSEGV, SimpleLoggerMgr::handleSegFault);
         oldSigAbortHandler = signal(SIGABRT, SimpleLoggerMgr::handleSegAbort);
     }
+    stackTraceBuffer = (char*)malloc(stackTraceBufferSize);
 
+#endif
     tFlush = std::thread(SimpleLoggerMgr::flushWorker);
     tCompress = std::thread(SimpleLoggerMgr::compressWorker);
-
-    stackTraceBuffer = (char*)malloc(stackTraceBufferSize);
 }
 
 SimpleLoggerMgr::~SimpleLoggerMgr() {
     termination = true;
 
+#if defined(__linux__) || defined(__APPLE__)
     if (oldSigSegvHandler) signal(SIGSEGV, oldSigSegvHandler);
     if (oldSigAbortHandler) signal(SIGABRT, oldSigAbortHandler);
-
+#endif
     {   std::unique_lock<std::mutex> l(cvFlusherLock);
         cvFlusher.notify_all();
     }
@@ -753,9 +820,6 @@ std::string SimpleLogger::replaceString( const std::string& src_str,
 void SimpleLogger::findMinMaxRevNum( size_t& min_revnum_out,
                                      size_t& max_revnum_out )
 {
-    DIR *dir_info;
-    struct dirent *dir_entry;
-
     std::string dir_path = "./";
     std::string file_name_only = filePath;
     size_t last_pos = filePath.rfind("/");
@@ -768,42 +832,81 @@ void SimpleLogger::findMinMaxRevNum( size_t& min_revnum_out,
     bool min_revnum_initialized = false;
     size_t min_revnum = 0;
     size_t max_revnum = 0;
-    dir_info = opendir(dir_path.c_str());
+
+#if defined(__linux__) || defined(__APPLE__)
+    DIR* dir_info = opendir(dir_path.c_str());
+    struct dirent *dir_entry = nullptr;
     while ( dir_info && (dir_entry = readdir(dir_info)) ) {
         std::string f_name(dir_entry->d_name);
         size_t f_name_pos = f_name.rfind(file_name_only);
         // Irrelavent file: skip.
         if (f_name_pos == std::string::npos) continue;
 
-        size_t last_dot = f_name.rfind(".");
-        if (last_dot == std::string::npos) continue;
-
-        bool comp_file = false;
-        std::string ext = f_name.substr(last_dot + 1, f_name.size() - last_dot - 1);
-        if (ext == "gz" && f_name.size() > 7) {
-            // Compressed file: asdf.log.123.tar.gz => need to get 123.
-            f_name = f_name.substr(0, f_name.size() - 7);
-            last_dot = f_name.rfind(".");
-            if (last_dot == std::string::npos) continue;
-            ext = f_name.substr(last_dot + 1, f_name.size() - last_dot - 1);
-            comp_file = true;
-        }
-
-        size_t revnum = atoi(ext.c_str());
-        max_revnum = std::max( max_revnum,
-                               ( (comp_file) ? (revnum+1) : (revnum) ) );
-        if (!min_revnum_initialized) {
-            min_revnum = revnum;
-            min_revnum_initialized = true;
-        }
-        min_revnum = std::min(min_revnum, revnum);
+        findMinMaxRevNumInternal(min_revnum_initialized,
+                                 min_revnum,
+                                 max_revnum,
+                                 f_name);
     }
     if (dir_info) {
         closedir(dir_info);
     }
+#elif defined(WIN32) || defined(_WIN32)
+    // Windows
+    WIN32_FIND_DATA filedata;
+    HANDLE hfind;
+    std::string query_str = dir_path + "*";
+
+    // find all files start with 'prefix'
+    hfind = FindFirstFile(query_str.c_str(), &filedata);
+    while (hfind != INVALID_HANDLE_VALUE) {
+        std::string f_name(filedata.cFileName);
+        size_t f_name_pos = f_name.rfind(file_name_only);
+        // Irrelavent file: skip.
+        if (f_name_pos != std::string::npos) {
+            findMinMaxRevNumInternal(min_revnum_initialized,
+                                     min_revnum,
+                                     max_revnum,
+                                     f_name);
+        }
+
+        if (!FindNextFile(hfind, &filedata)) {
+            FindClose(hfind);
+            hfind = INVALID_HANDLE_VALUE;
+        }
+    }
+#endif
 
     min_revnum_out = min_revnum;
     max_revnum_out = max_revnum;
+}
+
+void SimpleLogger::findMinMaxRevNumInternal(bool& min_revnum_initialized,
+                                            size_t& min_revnum,
+                                            size_t& max_revnum,
+                                            std::string& f_name)
+{
+    size_t last_dot = f_name.rfind(".");
+    if (last_dot == std::string::npos) return;
+
+    bool comp_file = false;
+    std::string ext = f_name.substr(last_dot + 1, f_name.size() - last_dot - 1);
+    if (ext == "gz" && f_name.size() > 7) {
+        // Compressed file: asdf.log.123.tar.gz => need to get 123.
+        f_name = f_name.substr(0, f_name.size() - 7);
+        last_dot = f_name.rfind(".");
+        if (last_dot == std::string::npos) return;
+        ext = f_name.substr(last_dot + 1, f_name.size() - last_dot - 1);
+        comp_file = true;
+    }
+
+    size_t revnum = atoi(ext.c_str());
+    max_revnum = std::max( max_revnum,
+                           ( (comp_file) ? (revnum+1) : (revnum) ) );
+    if (!min_revnum_initialized) {
+        min_revnum = revnum;
+        min_revnum_initialized = true;
+    }
+    min_revnum = std::min(min_revnum, revnum);
 }
 
 std::string SimpleLogger::getLogFilePath(size_t file_num) const {
@@ -867,14 +970,14 @@ void SimpleLogger::setDispLevel(int level) {
     curDispLevel = level;
 }
 
-#define _snprintf(msg, avail_len, cur_len, msg_len, args...)        \
+#define _snprintf(msg, avail_len, cur_len, msg_len, ...)            \
     avail_len = (avail_len > cur_len) ? (avail_len - cur_len) : 0;  \
-    msg_len = snprintf( msg + cur_len, avail_len, args );           \
+    msg_len = snprintf( msg + cur_len, avail_len, __VA_ARGS__ );    \
     cur_len += (avail_len > msg_len) ? msg_len : avail_len
 
-#define _vsnprintf(msg, avail_len, cur_len, msg_len, args...)       \
+#define _vsnprintf(msg, avail_len, cur_len, msg_len, ...)           \
     avail_len = (avail_len > cur_len) ? (avail_len - cur_len) : 0;  \
-    msg_len = vsnprintf( msg + cur_len, avail_len, args );          \
+    msg_len = vsnprintf( msg + cur_len, avail_len, __VA_ARGS__ );   \
     cur_len += (avail_len > msg_len) ? msg_len : avail_len
 
 void SimpleLogger::put(int level,
@@ -1011,6 +1114,7 @@ void SimpleLogger::put(int level,
 }
 
 void SimpleLogger::doCompression(size_t file_num) {
+#if defined(__linux__) || defined(__APPLE__)
     int r = 0;
     std::string filename = getLogFilePath(file_num);
     std::string cmd;
@@ -1040,6 +1144,7 @@ void SimpleLogger::doCompression(size_t file_num) {
             minRevnum = ii+1;
         }
     }
+#endif
 
     numCompJobs.fetch_sub(1);
 }

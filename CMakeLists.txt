@@ -24,13 +24,15 @@ include_directories(BEFORE ${PROJECT_SOURCE_DIR}/src)
 include_directories(BEFORE ${PROJECT_SOURCE_DIR}/tests)
 
 # Compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
-if (NOT APPLE)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
-endif ()
-
+if (NOT WIN32)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+    if (NOT APPLE)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
+    endif ()
+endif()
+    
 if (ADDRESS_SANITIZER GREATER 0)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fuse-ld=gold")
@@ -40,7 +42,7 @@ endif()
 if (THREAD_SANITIZER GREATER 0)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fuse-ld=gold")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DSUPPRESS_TSAN_FALSE_ALARMS=1")
+    add_definitions(-DSUPPRESS_TSAN_FALSE_ALARMS=1)
     message(STATUS "---- THREAD SANITIZER IS ON ----")
 endif()
 
@@ -50,10 +52,18 @@ if (LEAK_SANITIZER GREATER 0)
 endif()
 
 
+if (WIN32)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd5045 /wd4571 /wd4774 /wd4820 /wd5039 /wd4626 /wd4625 /wd5026 /wd5027 /wd4623 /W0")
+    message(STATUS "---- WIN32 ----")
+endif()
+
+
 # === Program flags ===
 
-if (TESTSUITE_NO_COLOR GREATER 0)
+if ( (TESTSUITE_NO_COLOR GREATER 0) OR (WIN32) )
     add_definitions(-DTESTSUITE_NO_COLOR=1)
+    add_definitions(-DLOGGER_NO_COLOR=1)    
+    message(STATUS "---- NO ANSI COLOR ----")
 endif()
 
 if (APPLE)
