@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.17
+ * Version: 0.3.20
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -1119,34 +1119,39 @@ void SimpleLogger::put(int level,
     l.unlock();
 }
 
+void SimpleLogger::execCmd(const std::string& cmd_given) {
+    int r = 0;
+    std::string cmd = cmd_given;
+
+#if defined(__linux__)
+    cmd += " > /dev/null";
+    r = system(cmd.c_str());
+
+#elif defined(__APPLE__)
+    cmd += " 2> /dev/null";
+    FILE* fp = popen(cmd.c_str(), "r");
+    r = pclose(fp);
+#endif
+    (void)r;
+}
+
 void SimpleLogger::doCompression(size_t file_num) {
 #if defined(__linux__) || defined(__APPLE__)
-    int r = 0;
     std::string filename = getLogFilePath(file_num);
     std::string cmd;
-    cmd = "tar zcvf " + filename + ".tar.gz " + filename +
-          " 2>&1 /dev/null";
-    {   FILE* fp = popen(cmd.c_str(), "r");
-        if (fp) r = pclose(fp);
-        (void)r;
-    }
+    cmd = "tar zcvf " + filename + ".tar.gz " + filename;
+    execCmd(cmd);
 
-    cmd = "rm -f " + filename + " 2>&1 /dev/null";
-    {   FILE* fp = popen(cmd.c_str(), "r");
-        if (fp) r = pclose(fp);
-        (void)r;
-    }
+    cmd = "rm -f " + filename;
+    execCmd(cmd);
 
     // Remove previous log files.
     if (maxLogFiles && file_num >= maxLogFiles) {
         for (size_t ii=minRevnum; ii<=file_num-maxLogFiles; ++ii) {
             filename = getLogFilePath(ii);
             std::string filename_tar = getLogFilePath(ii) + ".tar.gz";
-            cmd = "rm -f " + filename + " " + filename_tar + " 2>&1 /dev/null";
-            {   FILE* fp = popen(cmd.c_str(), "r");
-                if (fp) r = pclose(fp);
-                (void)r;
-            }
+            cmd = "rm -f " + filename + " " + filename_tar;
+            execCmd(cmd);
             minRevnum = ii+1;
         }
     }

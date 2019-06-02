@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.17
+ * Version: 0.3.20
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -253,6 +253,7 @@ private:
                                   size_t& max_revnum,
                                   std::string& f_name);
     std::string getLogFilePath(size_t file_num) const;
+    void execCmd(const std::string& cmd);
     void doCompression(size_t file_num);
     bool flush(size_t start_pos);
 
