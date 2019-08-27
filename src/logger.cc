@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.20
+ * Version: 0.3.22
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -409,6 +409,24 @@ void SimpleLoggerMgr::logStackBacktrace(size_t timeout_ms) {
     }
 }
 
+bool SimpleLoggerMgr::chkExitOnCrash() {
+    if (exitOnCrash) return true;
+
+    std::string env_segv_str;
+    const char* env_segv = std::getenv("SIMPLELOGGER_EXIT_ON_CRASH");
+    if (env_segv) env_segv_str = env_segv;
+
+    if ( env_segv_str == "ON" ||
+         env_segv_str == "on" ||
+         env_segv_str == "TRUE" ||
+         env_segv_str == "true" ) {
+        // Manually turned off by user, via env var.
+        return true;
+    }
+
+    return false;
+}
+
 void SimpleLoggerMgr::handleSegFault(int sig) {
 #if defined(__linux__) || defined(__APPLE__)
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
@@ -419,6 +437,13 @@ void SimpleLoggerMgr::handleSegFault(int sig) {
 
     printf("[SEG FAULT] Flushed all logs safely.\n");
     fflush(stdout);
+
+    if (mgr->chkExitOnCrash()) {
+        printf("[SEG FAULT] Exit on crash.\n");
+        fflush(stdout);
+        exit(-1);
+    }
+
     if (mgr->oldSigSegvHandler) {
         mgr->oldSigSegvHandler(sig);
     }
@@ -435,6 +460,13 @@ void SimpleLoggerMgr::handleSegAbort(int sig) {
 
     printf("[ABORT] Flushed all logs safely.\n");
     fflush(stdout);
+
+    if (mgr->chkExitOnCrash()) {
+        printf("[ABORT] Exit on crash.\n");
+        fflush(stdout);
+        exit(-1);
+    }
+
     abort();
 #endif
 }
@@ -522,6 +554,10 @@ void SimpleLoggerMgr::setStackTraceOriginOnly(bool origin_only) {
     crashDumpOriginOnly = origin_only;
 }
 
+void SimpleLoggerMgr::setExitOnCrash(bool exit_on_crash) {
+    exitOnCrash = exit_on_crash;
+}
+
 
 SimpleLoggerMgr::SimpleLoggerMgr()
     : termination(false)
@@ -530,6 +566,7 @@ SimpleLoggerMgr::SimpleLoggerMgr()
     , stackTraceBuffer(nullptr)
     , crashOriginThread(0)
     , crashDumpOriginOnly(true)
+    , exitOnCrash(false)
     , abortTimer(0)
 {
 #if defined(__linux__) || defined(__APPLE__)
@@ -948,16 +985,18 @@ int SimpleLogger::start() {
 
 int SimpleLogger::stop() {
     if (fs.is_open()) {
-        SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
-        SimpleLogger* ll = this;
-        mgr->removeLogger(ll);
+        SimpleLoggerMgr* mgr = SimpleLoggerMgr::getWithoutInit();
+        if (mgr) {
+            SimpleLogger* ll = this;
+            mgr->removeLogger(ll);
 
-        _log_sys(ll, "Stop logger: %s", filePath.c_str());
-        flushAll();
-        fs.flush();
-        fs.close();
+            _log_sys(ll, "Stop logger: %s", filePath.c_str());
+            flushAll();
+            fs.flush();
+            fs.close();
 
-        while (numCompJobs.load() > 0) std::this_thread::yield();
+            while (numCompJobs.load() > 0) std::this_thread::yield();
+        }
     }
 
     return 0;

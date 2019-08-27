@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.20
+ * Version: 0.3.22
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -339,6 +339,19 @@ public:
     void setCrashDumpPath(const std::string& path,
                           bool origin_only);
     void setStackTraceOriginOnly(bool origin_only);
+
+    /**
+     * Set the flag regarding exiting on crash.
+     * If flag is `true`, custom segfault handler will not invoke
+     * original handler so that process will terminate without
+     * generating core dump.
+     * The flag is `false` by default.
+     *
+     * @param exit_on_crash New flag value.
+     * @return void.
+     */
+    void setExitOnCrash(bool exit_on_crash);
+
     const std::string& getCriticalInfo() const;
 
     static std::mutex displayLock;
@@ -365,6 +378,8 @@ private:
     void flushRawStack(RawStackInfo& stack_info);
     void addRawStackInfo(bool crash_origin = false);
     void logStackBackTraceOtherThreads();
+
+    bool chkExitOnCrash();
 
     std::mutex loggersLock;
     std::unordered_set<SimpleLogger*> loggers;
@@ -395,7 +410,10 @@ private:
     // Termination signal.
     std::atomic<bool> termination;
 
+    // Original segfault handler.
     void (*oldSigSegvHandler)(int);
+
+    // Original abort handler.
     void (*oldSigAbortHandler)(int);
 
     // Critical info that will be displayed on crash.
@@ -409,7 +427,15 @@ private:
 
     std::string crashDumpPath;
     std::ofstream crashDumpFile;
+
+    // If `true`, generate stack trace only for the origin thread.
+    // Default: `true`.
     bool crashDumpOriginOnly;
+
+    // If `true`, do not invoke original segfault handler
+    // so that process just terminates.
+    // Default: `false`.
+    bool exitOnCrash;
 
     std::atomic<uint64_t> abortTimer;
 
