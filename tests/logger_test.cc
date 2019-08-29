@@ -315,6 +315,46 @@ int logger_function_as_parameter_test() {
     return 0;
 }
 
+int logger_timed_log_test(bool is_global) {
+    const std::string prefix = TEST_SUITE_AUTO_PREFIX;
+    TestSuite::clearTestFile(prefix);
+    std::string filename = TestSuite::getTestFileName(prefix) + ".log";
+
+    SimpleLogger* ll = nullptr;
+    TestSuite::Timer tt;
+
+    ll = new SimpleLogger(filename, 128, 1024*1024, 0);
+    ll->start();
+    ll->setLogLevel(6);
+
+    auto worker_func = [&ll, is_global](int tid) -> void {
+        for (size_t ii=0; ii<100; ++ii) {
+            SimpleLogger::Levels lv = (ii < 50)
+                                      ? SimpleLogger::TRACE
+                                      : SimpleLogger::UNKNOWN;
+            if (is_global) {
+                _timed_log_g(ll, 100, lv, SimpleLogger::INFO,
+                             "thread %d, %zu", tid, ii);
+            } else {
+                _timed_log_t(ll, 100, lv, SimpleLogger::INFO,
+                             "thread %d %zu", tid, ii);
+            }
+            TestSuite::sleep_ms(10);
+        }
+    };
+
+    std::thread t1(worker_func, 1);
+    std::thread t2(worker_func, 2);
+    if (t1.joinable()) t1.join();
+    if (t2.joinable()) t2.join();
+
+    delete ll;
+
+    SimpleLogger::shutdown();
+    TestSuite::clearTestFile(prefix, TestSuite::END_OF_TEST);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     TestSuite ts(argc, argv);
 
@@ -343,6 +383,10 @@ int main(int argc, char** argv) {
 
     ts.doTest("function as parameter test",
               logger_function_as_parameter_test);
+
+    ts.doTest("timed log test",
+              logger_timed_log_test,
+              TestRange<bool>({true, false}));
 
     return 0;
 }
