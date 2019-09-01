@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.23
+ * Version: 0.3.24
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -594,8 +594,8 @@ SimpleLoggerMgr::~SimpleLoggerMgr() {
     termination = true;
 
 #if defined(__linux__) || defined(__APPLE__)
-    if (oldSigSegvHandler) signal(SIGSEGV, oldSigSegvHandler);
-    if (oldSigAbortHandler) signal(SIGABRT, oldSigAbortHandler);
+    signal(SIGSEGV, oldSigSegvHandler);
+    signal(SIGABRT, oldSigAbortHandler);
 #endif
     {   std::unique_lock<std::mutex> l(cvFlusherLock);
         cvFlusher.notify_all();

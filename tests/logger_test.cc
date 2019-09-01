@@ -355,6 +355,34 @@ int logger_timed_log_test(bool is_global) {
     return 0;
 }
 
+int logger_init_twice_test() {
+    const std::string prefix = TEST_SUITE_AUTO_PREFIX;
+    TestSuite::clearTestFile(prefix);
+    std::string filename = TestSuite::getTestFileName(prefix) + ".log";
+
+    SimpleLogger* ll = nullptr;
+    TestSuite::Timer tt;
+
+    ll = new SimpleLogger(filename, 128, 1024*1024, 0);
+    ll->start();
+    delete ll;
+    SimpleLogger::shutdown();
+
+    ll = new SimpleLogger(filename, 128, 1024*1024, 0);
+    ll->start();
+    delete ll;
+    SimpleLogger::shutdown();
+
+#if 0
+    int* a = 0;
+    int b = *a;
+    (void)b;
+#endif
+
+    TestSuite::clearTestFile(prefix, TestSuite::END_OF_TEST);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     TestSuite ts(argc, argv);
 
@@ -387,6 +415,9 @@ int main(int argc, char** argv) {
     ts.doTest("timed log test",
               logger_timed_log_test,
               TestRange<bool>({true, false}));
+
+    ts.doTest("logger init twice test",
+              logger_init_twice_test);
 
     return 0;
 }
