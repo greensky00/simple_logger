@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.25
+ * Version: 0.3.26
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -979,7 +979,7 @@ int SimpleLogger::start() {
     _log_sys(ll, "Start logger: %s (%zu MB per file, up to %zu files)",
              filePath.c_str(),
              maxLogFileSize / 1024 / 1024,
-             maxLogFiles);
+             maxLogFiles.load());
 
     const std::string& critical_info = mgr->getCriticalInfo();
     if (!critical_info.empty()) {
@@ -1019,6 +1019,12 @@ void SimpleLogger::setDispLevel(int level) {
     if (level > 6) return;
 
     curDispLevel = level;
+}
+
+void SimpleLogger::setMaxLogFiles(size_t max_log_files) {
+    if (max_log_files == 0) return;
+
+    maxLogFiles = max_log_files;
 }
 
 #define _snprintf(msg, avail_len, cur_len, msg_len, ...)            \
@@ -1190,9 +1196,10 @@ void SimpleLogger::doCompression(size_t file_num) {
     cmd = "rm -f " + filename;
     execCmd(cmd);
 
+    size_t max_log_files = maxLogFiles.load();
     // Remove previous log files.
-    if (maxLogFiles && file_num >= maxLogFiles) {
-        for (size_t ii=minRevnum; ii<=file_num-maxLogFiles; ++ii) {
+    if (max_log_files && file_num >= max_log_files) {
+        for (size_t ii=minRevnum; ii<=file_num-max_log_files; ++ii) {
             filename = getLogFilePath(ii);
             std::string filename_tar = getLogFilePath(ii) + ".tar.gz";
             cmd = "rm -f " + filename + " " + filename_tar;

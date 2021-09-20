@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.25
+ * Version: 0.3.26
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -283,6 +283,7 @@ public:
 
     void setLogLevel(int level);
     void setDispLevel(int level);
+    void setMaxLogFiles(size_t max_log_files);
 
     inline int getLogLevel()  const { return curLogLevel.load(MOR); }
     inline int getDispLevel() const { return curDispLevel.load(MOR); }
@@ -311,7 +312,7 @@ private:
     std::string filePath;
     size_t minRevnum;
     size_t curRevnum;
-    size_t maxLogFiles;
+    std::atomic<size_t> maxLogFiles;
     std::ofstream fs;
 
     uint64_t maxLogFileSize;
