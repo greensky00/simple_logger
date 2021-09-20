@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.26
+ * Version: 0.3.27
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -113,14 +113,14 @@
     prefix std::mutex timer_lock;                                       \
     prefix bool first_event_fired = false;                              \
     prefix std::chrono::system_clock::time_point last_timeout =         \
-        std::chrono::system_clock::now();
+        std::chrono::system_clock::now();                               \
 
 #define _timed_log_body(l, interval_ms, lv1, lv2, ...)                  \
     std::chrono::system_clock::time_point cur =                         \
         std::chrono::system_clock::now();                               \
-    std::chrono::duration<double> elapsed = cur - last_timeout;         \
     bool timeout = false;                                               \
     {   std::lock_guard<std::mutex> l(timer_lock);                      \
+        std::chrono::duration<double> elapsed = cur - last_timeout;     \
         if ( elapsed.count() * 1000 > interval_ms ||                    \
              !first_event_fired ) {                                     \
             cur = std::chrono::system_clock::now();                     \
@@ -248,10 +248,6 @@ private:
         int write(size_t _len, char* msg);
         int flush(std::ofstream& fs);
 
-#ifdef SUPPRESS_TSAN_FALSE_ALARMS
-        // To avoid false alarm by TSan.
-        std::mutex ctxLock;
-#endif
         size_t len;
         char ctx[MSG_SIZE];
         std::atomic<Status> status;

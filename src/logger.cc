@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.26
+ * Version: 0.3.27
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -734,9 +734,6 @@ struct ThreadWrapper {
 // ==========================================
 
 SimpleLogger::LogElem::LogElem() : len(0), status(CLEAN) {
-#ifdef SUPPRESS_TSAN_FALSE_ALARMS
-    std::lock_guard<std::mutex> l(ctxLock);
-#endif
     memset(ctx, 0x0, MSG_SIZE);
 }
 
@@ -754,33 +751,23 @@ bool SimpleLogger::LogElem::available() {
 int SimpleLogger::LogElem::write(size_t _len, char* msg) {
     Status exp = CLEAN;
     Status val = WRITING;
-    if (!status.compare_exchange_strong(exp, val, MOR)) return -1;
+    if (!status.compare_exchange_strong(exp, val)) return -1;
 
-    {
-#ifdef SUPPRESS_TSAN_FALSE_ALARMS
-        std::lock_guard<std::mutex> l(ctxLock);
-#endif
-        len = (_len > MSG_SIZE) ? MSG_SIZE : _len;
-        memcpy(ctx, msg, len);
-    }
+    len = (_len > MSG_SIZE) ? MSG_SIZE : _len;
+    memcpy(ctx, msg, len);
 
-    status.store(LogElem::DIRTY, MOR);
+    status.store(LogElem::DIRTY);
     return 0;
 }
 
 int SimpleLogger::LogElem::flush(std::ofstream& fs) {
     Status exp = DIRTY;
     Status val = FLUSHING;
-    if (!status.compare_exchange_strong(exp, val, MOR)) return -1;
+    if (!status.compare_exchange_strong(exp, val)) return -1;
 
-    {
-#ifdef SUPPRESS_TSAN_FALSE_ALARMS
-        std::lock_guard<std::mutex> l(ctxLock);
-#endif
-        fs.write(ctx, len);
-    }
+    fs.write(ctx, len);
 
-    status.store(LogElem::CLEAN, MOR);
+    status.store(LogElem::CLEAN);
     return 0;
 }
 
@@ -1236,7 +1223,6 @@ bool SimpleLogger::flush(size_t start_pos) {
         fs.open(getLogFilePath(curRevnum), std::ofstream::out | std::ofstream::app);
 
         // Compress it (tar gz). Register to the global queue.
-#ifndef SUPPRESS_TSAN_FALSE_ALARMS
         SimpleLoggerMgr* mgr = SimpleLoggerMgr::getWithoutInit();
         if (mgr) {
             numCompJobs.fetch_add(1);
@@ -1244,7 +1230,6 @@ bool SimpleLogger::flush(size_t start_pos) {
                 new SimpleLoggerMgr::CompElem(curRevnum-1, this);
             mgr->addCompElem(elem);
         }
-#endif
     }
 
     return true;
