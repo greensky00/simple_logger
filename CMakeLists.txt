@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
+project(SimpleLogger VERSION 0.3.26 LANGUAGES CXX)
 
 # === Build type (default: RelWithDebInfo, O2) ===========
 if (NOT CMAKE_BUILD_TYPE)
@@ -32,7 +33,7 @@ if (NOT WIN32)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
     endif ()
 endif()
-    
+
 if (ADDRESS_SANITIZER GREATER 0)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fuse-ld=gold")
@@ -62,7 +63,7 @@ endif()
 
 if ( (TESTSUITE_NO_COLOR GREATER 0) OR (WIN32) )
     add_definitions(-DTESTSUITE_NO_COLOR=1)
-    add_definitions(-DLOGGER_NO_COLOR=1)    
+    add_definitions(-DLOGGER_NO_COLOR=1)
     message(STATUS "---- NO ANSI COLOR ----")
 endif()
 
@@ -73,7 +74,7 @@ endif ()
 
 # === Test ===
 
-set(LOGGER_TEST 
+set(LOGGER_TEST
     ${TEST_DIR}/logger_test.cc
     ${ROOT_SRC}/logger.cc)
 add_executable(logger_test ${LOGGER_TEST})
@@ -81,12 +82,12 @@ add_executable(logger_test ${LOGGER_TEST})
 
 # === Example ===
 
-set(BASIC_EXAMPLE 
+set(BASIC_EXAMPLE
     ${EXAMPLE_DIR}/basic_example.cc
     ${ROOT_SRC}/logger.cc)
 add_executable(basic_example ${BASIC_EXAMPLE})
 
-set(CRASH_EXAMPLE 
+set(CRASH_EXAMPLE
     ${EXAMPLE_DIR}/crash_example.cc
     ${ROOT_SRC}/logger.cc)
 add_executable(crash_example ${CRASH_EXAMPLE})
