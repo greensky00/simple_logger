@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.24
+ * Version: 0.3.25
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -497,6 +497,9 @@ void SimpleLoggerMgr::handleStackTrace(int sig, siginfo_t* info, void* secret) {
 // LCOV_EXCL_STOP
 
 void SimpleLoggerMgr::flushWorker() {
+#ifdef __linux__
+    pthread_setname_np(pthread_self(), "sl_flusher");
+#endif
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     while (!mgr->chkTermination()) {
         // Every 500ms.
@@ -515,6 +518,9 @@ void SimpleLoggerMgr::flushWorker() {
 }
 
 void SimpleLoggerMgr::compressWorker() {
+#ifdef __linux__
+    pthread_setname_np(pthread_self(), "sl_compressor");
+#endif
     SimpleLoggerMgr* mgr = SimpleLoggerMgr::get();
     bool sleep_next_time = true;
     while (!mgr->chkTermination()) {
