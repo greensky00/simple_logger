@@ -3,11 +3,10 @@ project(SimpleLogger VERSION 0.3.26 LANGUAGES CXX)
 
 # === Build type (default: RelWithDebInfo, O2) ===========
 if (NOT CMAKE_BUILD_TYPE)
-    set(BUILD_TYPE_OPTIONS
-        "Choose the type of build, "
-        "options are: Debug Release RelWithDebInfo MinSizeRel.")
     set(CMAKE_BUILD_TYPE "RelWithDebInfo"
-        CACHE ${BUILD_TYPE_OPTIONS} FORCE)
+        CACHE STRING
+        "Options are: Debug Release RelWithDebInfo MinSizeRel."
+        FORCE)
     message(STATUS "Build type is not given, use default.")
 endif ()
 message(STATUS "Build type: " ${CMAKE_BUILD_TYPE})

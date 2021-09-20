@@ -5,7 +5,7 @@
  * https://github.com/greensky00
  *
  * Simple Logger
- * Version: 0.3.27
+ * Version: 0.3.28
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -116,6 +116,9 @@
 std::atomic<SimpleLoggerMgr*> SimpleLoggerMgr::instance(nullptr);
 std::mutex SimpleLoggerMgr::instanceLock;
 std::mutex SimpleLoggerMgr::displayLock;
+
+// Number of digits to represent thread IDs (Linux only).
+std::atomic<int> tid_digits(2);
 
 struct SimpleLoggerMgr::CompElem {
     CompElem(uint64_t num, SimpleLogger* logger)
@@ -710,23 +713,43 @@ const std::string& SimpleLoggerMgr::getCriticalInfo() const {
 struct ThreadWrapper {
 #ifdef __linux__
     ThreadWrapper() {
-        myTid = (uint64_t)pthread_self();
+        mySelf = (uint64_t)pthread_self();
+        myTid = (uint32_t)syscall(SYS_gettid);
+
+        // Get the number of digits for alignment.
+        int num_digits = 0;
+        uint32_t tid = myTid;
+        while (tid) {
+            num_digits++;
+            tid /= 10;
+        }
+        int exp = tid_digits;
+        const size_t MAX_NUM_CMP = 10;
+        size_t count = 0;
+        while (exp < num_digits && count++ < MAX_NUM_CMP) {
+            if (tid_digits.compare_exchange_strong(exp, num_digits)) {
+                break;
+            }
+            exp = tid_digits;
+        }
+
         SimpleLoggerMgr* mgr = SimpleLoggerMgr::getWithoutInit();
         if (mgr) {
-            mgr->addThread(myTid);
+            mgr->addThread(mySelf);
         }
     }
     ~ThreadWrapper() {
         SimpleLoggerMgr* mgr = SimpleLoggerMgr::getWithoutInit();
         if (mgr) {
-            mgr->removeThread(myTid);
+            mgr->removeThread(mySelf);
         }
     }
 #else
     ThreadWrapper() : myTid(0) {}
     ~ThreadWrapper() {}
 #endif
-    uint64_t myTid;
+    uint64_t mySelf;
+    uint32_t myTid;
 };
 
 
@@ -1038,9 +1061,14 @@ void SimpleLogger::put(int level,
                                       "FATL", "ERRO", "WARN",
                                       "INFO", "DEBG", "TRAC"};
     char msg[MSG_SIZE];
+    thread_local ThreadWrapper thread_wrapper;
+#ifdef __linux__
+    const int TID_DIGITS = tid_digits;
+    thread_local uint32_t tid_hash = thread_wrapper.myTid;
+#else
     thread_local std::thread::id tid = std::this_thread::get_id();
     thread_local uint32_t tid_hash = std::hash<std::thread::id>{}(tid) % 0x10000;
-    thread_local ThreadWrapper thread_wrapper;
+#endif
 
     // Print filename part only (excluding directory path).
     size_t last_slash = 0;
@@ -1057,6 +1085,17 @@ void SimpleLogger::put(int level,
     size_t avail_len = MSG_SIZE;
     size_t msg_len = 0;
 
+#ifdef __linux__
+    _snprintf( msg, avail_len, cur_len, msg_len,
+               "%04d-%02d-%02dT%02d:%02d:%02d.%03d_%03d%c%02d:%02d "
+               "[%*u] "
+               "[%s] ",
+               lt.year, lt.month, lt.day,
+               lt.hour, lt.min, lt.sec, lt.msec, lt.usec,
+               (tzGap >= 0)?'+':'-', tz_gap_abs / 60, tz_gap_abs % 60,
+               TID_DIGITS, tid_hash,
+               lv_names[level] );
+#else
     _snprintf( msg, avail_len, cur_len, msg_len,
                "%04d-%02d-%02dT%02d:%02d:%02d.%03d_%03d%c%02d:%02d "
                "[%04x] "
@@ -1066,6 +1105,7 @@ void SimpleLogger::put(int level,
                (tzGap >= 0)?'+':'-', tz_gap_abs / 60, tz_gap_abs % 60,
                tid_hash,
                lv_names[level] );
+#endif
 
     va_list args;
     va_start(args, format);
@@ -1114,6 +1154,16 @@ void SimpleLogger::put(int level,
 
     cur_len = 0;
     avail_len = MSG_SIZE;
+#ifdef __linux__
+    _snprintf( msg, avail_len, cur_len, msg_len,
+               " [" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") "."
+               _CL_BROWN("%03d") " " _CL_BROWN("%03d")
+               "] [tid " _CL_B_BLUE("%*u") "] "
+               "[%s] ",
+               lt.hour, lt.min, lt.sec, lt.msec, lt.usec,
+               TID_DIGITS, tid_hash,
+               colored_lv_names[level] );
+#else
     _snprintf( msg, avail_len, cur_len, msg_len,
                " [" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") ":" _CL_BROWN("%02d") "."
                _CL_BROWN("%03d") " " _CL_BROWN("%03d")
@@ -1122,6 +1172,7 @@ void SimpleLogger::put(int level,
                lt.hour, lt.min, lt.sec, lt.msec, lt.usec,
                tid_hash,
                colored_lv_names[level] );
+#endif
 
     if (source_file && func_name) {
         _snprintf( msg, avail_len, cur_len, msg_len,
